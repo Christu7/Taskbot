@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TaskBot — Task Approval</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header>
+    <h1>TaskBot</h1>
+    <p class="subtitle">Task Approval Dashboard</p>
+  </header>
+
+  <main>
+    <section id="pending-tasks">
+      <h2>Pending Approvals</h2>
+      <div id="task-list">
+        <!-- Tasks will be rendered here by app.js -->
+        <p class="empty-state">Loading tasks…</p>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <p>TaskBot &copy; 2024</p>
+  </footer>
+
+  <!-- Firebase SDKs (loaded via CDN — swap with your actual config) -->
+  <!-- TODO: Replace the config object in app.js with your Firebase project credentials -->
+  <script type="module" src="app.js"></script>
+</body>
+</html>

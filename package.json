@@ -1,0 +1,25 @@
+{
+  "name": "taskbot",
+  "version": "0.1.0",
+  "description": "TaskBot — serverless task management with Firebase + TypeScript",
+  "private": true,
+  "scripts": {
+    "install:functions": "npm install --prefix functions",
+    "build": "npm run build --prefix functions",
+    "build:watch": "npm run build:watch --prefix functions",
+    "lint": "npm run lint --prefix functions",
+    "serve": "npx firebase emulators:start",
+    "serve:functions": "npx firebase emulators:start --only functions",
+    "deploy": "npx firebase deploy",
+    "deploy:functions": "npx firebase deploy --only functions",
+    "deploy:hosting": "npx firebase deploy --only hosting",
+    "logs": "npx firebase functions:log",
+    "test": "echo \"No root-level tests yet. Run tests inside /functions.\""
+  },
+  "devDependencies": {
+    "firebase-tools": "^13.0.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
