@@ -1,0 +1,51 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── Helpers ─────────────────────────────────────────────────────────────
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // ── Users ────────────────────────────────────────────────────────────────
+    // User profile documents — readable/writable only by that user.
+    match /users/{userId} {
+      allow read, write: if isOwner(userId);
+
+      // Tokens subcollection — stores OAuth access/refresh tokens.
+      // Strictly owner-only. Cloud Functions access these via the Admin SDK
+      // (which bypasses these rules), so client apps never need direct access.
+      match /tokens/{tokenDoc} {
+        allow read, write: if isOwner(userId);
+      }
+    }
+
+    // ── Tasks ────────────────────────────────────────────────────────────────
+    // A task belongs to the user identified by task.ownerId.
+    match /tasks/{taskId} {
+      allow read, update, delete: if isSignedIn()
+                                  && resource.data.ownerId == request.auth.uid;
+
+      allow create: if isSignedIn()
+                    && request.resource.data.ownerId == request.auth.uid;
+    }
+
+    // ── OAuth State Tokens ───────────────────────────────────────────────────
+    // Short-lived CSRF tokens used during the OAuth handshake.
+    // Created and deleted exclusively by Cloud Functions (Admin SDK).
+    // No client should ever read or write these directly.
+    match /oauthStates/{stateId} {
+      allow read, write: if false;
+    }
+
+    // ── Deny everything else ─────────────────────────────────────────────────
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

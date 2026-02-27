@@ -8,17 +8,31 @@
 </head>
 <body>
   <header>
-    <h1>TaskBot</h1>
-    <p class="subtitle">Task Approval Dashboard</p>
+    <div class="header-top">
+      <div>
+        <h1>TaskBot</h1>
+        <p class="subtitle">Task Approval Dashboard</p>
+      </div>
+      <div id="auth-section">
+        <button id="login-btn">Sign in with Google</button>
+        <div id="user-info" hidden>
+          <span id="user-name"></span>
+          <button id="connect-btn">Connect Google Account for Tasks</button>
+          <button id="logout-btn">Sign out</button>
+        </div>
+      </div>
+    </div>
   </header>
 
   <main>
-    <section id="pending-tasks">
+    <section id="pending-tasks" hidden>
       <h2>Pending Approvals</h2>
       <div id="task-list">
-        <!-- Tasks will be rendered here by app.js -->
         <p class="empty-state">Loading tasks…</p>
       </div>
+    </section>
+    <section id="login-prompt">
+      <p>Sign in to view your pending task approvals.</p>
     </section>
   </main>
 

@@ -4,6 +4,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import {
   getFirestore,
+  connectFirestoreEmulator,
   collection,
   query,
   where,
@@ -11,18 +12,31 @@ import {
   doc,
   updateDoc,
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import {
+  getAuth,
+  GoogleAuthProvider,
+  signInWithPopup,
+  signOut,
+  onAuthStateChanged,
+} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
 const firebaseConfig = {
-  apiKey: "YOUR_API_KEY",
-  authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
-  projectId: "YOUR_PROJECT_ID",
-  storageBucket: "YOUR_PROJECT_ID.appspot.com",
-  messagingSenderId: "YOUR_SENDER_ID",
-  appId: "YOUR_APP_ID",
+  apiKey: "AIzaSyD-oZFSZo_9cHm9FegF8e_-cQJGtuLv6UM",
+  authDomain: "taskbot-fb10d.firebaseapp.com",
+  projectId: "taskbot-fb10d",
+  storageBucket: "taskbot-fb10d.firebasestorage.app",
+  messagingSenderId: "997717209533",
+  appId: "1:997717209533:web:3876c8dedfb2a8dfe9a2d4",
 };
 
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
+const auth = getAuth(app);
+
+// Connect to local Firestore emulator in development
+if (location.hostname === "127.0.0.1" || location.hostname === "localhost") {
+  connectFirestoreEmulator(db, "127.0.0.1", 8080);
+}
 
 // ─── DOM References ───────────────────────────────────────────────────────────
 const taskList = document.getElementById("task-list");
@@ -46,13 +60,14 @@ function renderTask(id, task) {
 }
 
 // ─── Real-time Listener for Pending Tasks ─────────────────────────────────────
-function listenForPendingTasks() {
+function listenForPendingTasks(uid) {
   const q = query(
     collection(db, "tasks"),
+    where("ownerId", "==", uid),
     where("status", "==", "pending")
   );
 
-  onSnapshot(q, (snapshot) => {
+  return onSnapshot(q, (snapshot) => {
     taskList.innerHTML = "";
 
     if (snapshot.empty) {
@@ -90,5 +105,54 @@ function escapeHtml(str) {
   }[m]));
 }
 
+// ─── Auth UI ──────────────────────────────────────────────────────────────────
+const loginBtn = document.getElementById("login-btn");
+const logoutBtn = document.getElementById("logout-btn");
+const connectBtn = document.getElementById("connect-btn");
+const userInfo = document.getElementById("user-info");
+const userName = document.getElementById("user-name");
+const pendingTasks = document.getElementById("pending-tasks");
+const loginPrompt = document.getElementById("login-prompt");
+
+let unsubscribeTasks = null;
+
+loginBtn.addEventListener("click", () => {
+  signInWithPopup(auth, new GoogleAuthProvider());
+});
+
+logoutBtn.addEventListener("click", () => {
+  signOut(auth);
+});
+
+connectBtn.addEventListener("click", async () => {
+  const token = await auth.currentUser.getIdToken();
+  const base = location.hostname === "127.0.0.1" || location.hostname === "localhost"
+    ? "http://127.0.0.1:5001/taskbot-fb10d/us-central1"
+    : "https://us-central1-taskbot-fb10d.cloudfunctions.net";
+  window.location.href = `${base}/oauthInit?token=${token}`;
+});
+
 // ─── Boot ─────────────────────────────────────────────────────────────────────
-listenForPendingTasks();
+onAuthStateChanged(auth, (user) => {
+  if (user) {
+    loginBtn.hidden = true;
+    userInfo.hidden = false;
+    userName.textContent = user.displayName || user.email;
+    pendingTasks.hidden = false;
+    loginPrompt.hidden = true;
+
+    if (!unsubscribeTasks) {
+      unsubscribeTasks = listenForPendingTasks(user.uid);
+    }
+  } else {
+    loginBtn.hidden = false;
+    userInfo.hidden = true;
+    pendingTasks.hidden = true;
+    loginPrompt.hidden = false;
+
+    if (unsubscribeTasks) {
+      unsubscribeTasks();
+      unsubscribeTasks = null;
+    }
+  }
+});

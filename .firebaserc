@@ -1,6 +1,6 @@
 {
   "projects": {
-    "default": "YOUR_FIREBASE_PROJECT_ID"
+    "default": "taskbot-fb10d"
   },
   "targets": {},
   "etags": {}

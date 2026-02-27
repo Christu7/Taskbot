@@ -1,4 +1,6 @@
 /* ─── Reset & Base ───────────────────────────────────────────────────────────── */
+[hidden] { display: none !important; }
+
 *, *::before, *::after {
   box-sizing: border-box;
   margin: 0;
@@ -19,6 +21,48 @@ header {
   background: #1a1a2e;
   color: #fff;
   padding: 1.5rem 2rem;
+}
+
+.header-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+#auth-section {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+#user-info {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+#user-name {
+  font-size: 0.9rem;
+  opacity: 0.85;
+}
+
+#auth-section button, #connect-btn {
+  padding: 0.4rem 0.9rem;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+#login-btn { background: #fff; color: #1a1a2e; }
+#logout-btn { background: transparent; color: #fff; border: 1px solid rgba(255,255,255,0.4); }
+#connect-btn { background: #4285f4; color: #fff; }
+
+#login-prompt {
+  text-align: center;
+  padding: 3rem;
+  color: #666;
 }
 
 header h1 {
