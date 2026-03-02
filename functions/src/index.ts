@@ -2,8 +2,12 @@ import * as admin from "firebase-admin";
 import { randomBytes } from "crypto";
 import { onRequest } from "firebase-functions/v2/https";
 import { onDocumentCreated } from "firebase-functions/v2/firestore";
+import { auth as functionsAuth } from "firebase-functions/v1";
 import { logger } from "firebase-functions";
 import { OAUTH_SCOPES, STATE_TTL_MS, createOAuthClient, saveTokens } from "./auth";
+import { createUser, getUser, updateUser } from "./services/firestore";
+import { UserPreferences } from "./models/user";
+export { driveWatcher } from "./functions/driveWatcher";
 
 admin.initializeApp();
 
@@ -29,6 +33,124 @@ export const onTaskCreated = onDocumentCreated(
     logger.info(`New task created: ${taskId}`, { task });
     // TODO: Add business logic (notifications, assignment, etc.)
     return null;
+  }
+);
+
+// ─── Auth Trigger: New User Created ───────────────────────────────────────────
+// Fires automatically when a new user authenticates via Firebase Auth for the
+// first time. Creates their Firestore user document with default settings.
+export const onUserCreated = functionsAuth.user().onCreate(async (user) => {
+  const { uid, email, displayName } = user;
+
+  logger.info(`New user signed up: ${uid} (${email ?? "no email"})`);
+
+  await createUser(uid, {
+    email: email ?? "",
+    displayName: displayName ?? email ?? uid,
+  });
+
+  logger.info(`Firestore user document created for ${uid}`);
+});
+
+// ─── HTTP: Update User Settings ───────────────────────────────────────────────
+// POST /updateUserSettings
+// Body (JSON): { isActive?: boolean, preferences?: Partial<UserPreferences> }
+//
+// Protected by Firebase Auth — caller must supply a valid ID token in the
+// Authorization header: "Bearer <id-token>"
+export const updateUserSettings = onRequest(
+  { region: "us-central1" },
+  async (req, res) => {
+    // Only allow POST
+    if (req.method !== "POST") {
+      res.status(405).json({ error: "Method not allowed. Use POST." });
+      return;
+    }
+
+    // 1. Extract and verify the Firebase ID token
+    const authHeader = req.headers.authorization ?? "";
+    if (!authHeader.startsWith("Bearer ")) {
+      res.status(401).json({ error: "Missing or malformed Authorization header. Expected: Bearer <id-token>" });
+      return;
+    }
+
+    let uid: string;
+    try {
+      const idToken = authHeader.slice(7); // strip "Bearer "
+      const decoded = await admin.auth().verifyIdToken(idToken);
+      uid = decoded.uid;
+    } catch (err) {
+      logger.warn("updateUserSettings: invalid ID token", err);
+      res.status(401).json({ error: "Invalid or expired ID token." });
+      return;
+    }
+
+    // 2. Ensure the user document exists
+    const existing = await getUser(uid);
+    if (!existing) {
+      res.status(404).json({ error: `No user document found for uid: ${uid}` });
+      return;
+    }
+
+    // 3. Parse and validate the request body
+    const { isActive, preferences } = req.body as {
+      isActive?: unknown;
+      preferences?: Partial<UserPreferences>;
+    };
+
+    const update: Record<string, unknown> = {};
+
+    if (isActive !== undefined) {
+      if (typeof isActive !== "boolean") {
+        res.status(400).json({ error: "isActive must be a boolean." });
+        return;
+      }
+      update.isActive = isActive;
+    }
+
+    if (preferences !== undefined) {
+      const allowed: (keyof UserPreferences)[] = ["notifyVia", "autoApprove", "proposalExpiryHours"];
+      for (const key of Object.keys(preferences) as (keyof UserPreferences)[]) {
+        if (!allowed.includes(key)) {
+          res.status(400).json({ error: `Unknown preference key: "${key}"` });
+          return;
+        }
+      }
+
+      // Validate individual preference values
+      if (preferences.notifyVia !== undefined && preferences.notifyVia !== "email") {
+        res.status(400).json({ error: 'notifyVia must be "email" (only supported option in MVP).' });
+        return;
+      }
+      if (preferences.autoApprove !== undefined && typeof preferences.autoApprove !== "boolean") {
+        res.status(400).json({ error: "preferences.autoApprove must be a boolean." });
+        return;
+      }
+      if (preferences.proposalExpiryHours !== undefined) {
+        const hours = preferences.proposalExpiryHours;
+        if (typeof hours !== "number" || hours <= 0 || !Number.isInteger(hours)) {
+          res.status(400).json({ error: "preferences.proposalExpiryHours must be a positive integer." });
+          return;
+        }
+      }
+
+      // Merge into existing preferences using dot-notation keys so we only
+      // overwrite the fields the caller specified.
+      for (const [key, value] of Object.entries(preferences)) {
+        update[`preferences.${key}`] = value;
+      }
+    }
+
+    if (Object.keys(update).length === 0) {
+      res.status(400).json({ error: "Request body must include at least one of: isActive, preferences." });
+      return;
+    }
+
+    // 4. Persist the changes
+    await updateUser(uid, update as Parameters<typeof updateUser>[1]);
+
+    logger.info(`User settings updated for ${uid}`, { update });
+    res.status(200).json({ success: true, updated: Object.keys(update) });
   }
 );
 
