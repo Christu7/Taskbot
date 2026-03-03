@@ -10,6 +10,8 @@ export const OAUTH_SCOPES: string[] = [
   "https://www.googleapis.com/auth/tasks",
   // Read calendar events to identify attendees
   "https://www.googleapis.com/auth/calendar.events.readonly",
+  // Send notification emails on behalf of the user
+  "https://www.googleapis.com/auth/gmail.send",
 ];
 
 // State tokens expire after 10 minutes.

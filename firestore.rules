@@ -44,6 +44,14 @@ service cloud.firestore {
                           && resource.data.assigneeUid == request.auth.uid;
     }
 
+    // ── Approval Tokens ───────────────────────────────────────────────────────
+    // Single-use tokens embedded in notification email links.
+    // Created and validated exclusively by Cloud Functions (Admin SDK).
+    // No client should ever read or write these directly.
+    match /approvalTokens/{token} {
+      allow read, write: if false;
+    }
+
     // ── OAuth State Tokens ───────────────────────────────────────────────────
     // Short-lived CSRF tokens used during the OAuth handshake.
     // Created and deleted exclusively by Cloud Functions (Admin SDK).

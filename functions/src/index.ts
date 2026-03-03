@@ -9,6 +9,7 @@ import { createUser, getUser, updateUser } from "./services/firestore";
 import { UserPreferences } from "./models/user";
 export { driveWatcher } from "./functions/driveWatcher";
 export { processTranscript } from "./functions/processTranscript";
+export { notifyUsers } from "./functions/notifyUsers";
 
 admin.initializeApp();
 
