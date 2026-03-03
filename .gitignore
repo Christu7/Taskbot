@@ -21,6 +21,7 @@ functions/lib/
 *.pem
 service-account*.json
 *-service-account.json
+*adminsdk*.json
 
 # ─── macOS ───────────────────────────────────────────────────────────────────
 .DS_Store

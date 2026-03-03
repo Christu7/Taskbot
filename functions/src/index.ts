@@ -119,7 +119,7 @@ export const updateUserSettings = onRequest(
 
       // Validate individual preference values
       if (preferences.notifyVia !== undefined && preferences.notifyVia !== "email") {
-        res.status(400).json({ error: 'notifyVia must be "email" (only supported option in MVP).' });
+        res.status(400).json({ error: "notifyVia must be \"email\" (only supported option in MVP)." });
         return;
       }
       if (preferences.autoApprove !== undefined && typeof preferences.autoApprove !== "boolean") {
