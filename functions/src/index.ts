@@ -8,6 +8,7 @@ import { OAUTH_SCOPES, STATE_TTL_MS, createOAuthClient, saveTokens } from "./aut
 import { createUser, getUser, updateUser } from "./services/firestore";
 import { UserPreferences } from "./models/user";
 export { driveWatcher } from "./functions/driveWatcher";
+export { processTranscript } from "./functions/processTranscript";
 
 admin.initializeApp();
 

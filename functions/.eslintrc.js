@@ -17,7 +17,8 @@ module.exports = {
     "plugin:@typescript-eslint/recommended",
   ],
   ignorePatterns: [
-    "/lib/**/*",  // ignore compiled output
+    "/lib/**/*",   // ignore compiled output
+    "/scripts/**", // one-off utility scripts, not part of the deployed bundle
   ],
   rules: {
     "@typescript-eslint/no-unused-vars": ["error", { "argsIgnorePattern": "^_" }],

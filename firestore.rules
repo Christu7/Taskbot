@@ -35,6 +35,15 @@ service cloud.firestore {
                     && request.resource.data.ownerId == request.auth.uid;
     }
 
+    // ── Proposals ────────────────────────────────────────────────────────────
+    // Task proposals extracted from meeting transcripts.
+    // Each assignee can only read and update their own proposals.
+    // Cloud Functions (Admin SDK) handle creation.
+    match /proposals/{meetingId}/tasks/{taskId} {
+      allow read, update: if isSignedIn()
+                          && resource.data.assigneeUid == request.auth.uid;
+    }
+
     // ── OAuth State Tokens ───────────────────────────────────────────────────
     // Short-lived CSRF tokens used during the OAuth handshake.
     // Created and deleted exclusively by Cloud Functions (Admin SDK).
