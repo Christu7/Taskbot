@@ -78,6 +78,9 @@ function listenForPendingTasks(uid) {
     snapshot.forEach((docSnap) => {
       renderTask(docSnap.id, docSnap.data());
     });
+  }, (err) => {
+    console.error("Task listener error:", err);
+    taskList.innerHTML = '<p class="empty-state">Failed to load tasks. Check the console for details.</p>';
   });
 }
 
