@@ -55,7 +55,7 @@ export const driveWatcher = onSchedule(
     // 2. Process each user independently — one failure must not abort others
     const results = await Promise.allSettled(
       activeUsers.map((user) =>
-        processUserDrive(user.uid, sinceTimestamp, activeUserEmails)
+        processUserDrive(user.uid, user.email, sinceTimestamp, activeUserEmails)
       )
     );
 
@@ -94,6 +94,7 @@ export const driveWatcher = onSchedule(
  */
 async function processUserDrive(
   uid: string,
+  detectorEmail: string,
   sinceTimestamp: Date,
   activeUserEmails: Set<string>
 ): Promise<number> {
@@ -210,6 +211,14 @@ async function processUserDrive(
           }
           // Either way, continue — don't drop the transcript because Calendar failed
         }
+      }
+
+      // ── Step 3d: Ensure the detecting user is always an attendee ─────────
+      // Calendar lookup may return no results for short/solo meetings.
+      // The person whose Drive detected this transcript was in the meeting,
+      // so always include them as a fallback.
+      if (detectorEmail && !attendeeEmails.includes(detectorEmail)) {
+        attendeeEmails = [detectorEmail, ...attendeeEmails];
       }
 
       // ── Step 4: Write the Firestore document ──────────────────────────────

@@ -95,8 +95,10 @@ export const processTranscript = onDocumentCreated(
         )
       ).filter((u): u is UserDocument => u !== null);
 
+      // Format as "Name <email>" so the AI has the email address available
+      // and can populate assigneeEmail in the extracted tasks.
       const attendeeNames = attendeeUserDocs.length > 0
-        ? attendeeUserDocs.map((u) => u.displayName || u.email)
+        ? attendeeUserDocs.map((u) => `${u.displayName || u.email} <${u.email}>`)
         : transcriptDoc.attendeeEmails; // fall back to raw emails if no user docs found
 
       // Derive the meeting date from detectedAt (best approximation without Calendar data)
