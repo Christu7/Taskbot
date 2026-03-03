@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { logger } from "firebase-functions";
 import { ExtractedTask, MeetingContext } from "../models/aiExtraction";
 import { buildExtractionPrompt } from "../prompts/taskExtraction";
+import { OpenAIProvider } from "./openaiProvider";
 
 // ─── Interface ────────────────────────────────────────────────────────────────
 
@@ -54,8 +55,8 @@ function parseRawResponse(text: string): unknown[] {
 
 // ─── Anthropic provider ───────────────────────────────────────────────────────
 
-/** Default model used for extraction. Override with AI_MODEL env var. */
-const DEFAULT_MODEL = "claude-sonnet-4-6";
+/** Default Anthropic model. Override with ANTHROPIC_MODEL env var (or legacy AI_MODEL). */
+const DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-6";
 
 /**
  * Task extraction provider backed by the Anthropic Claude API.
@@ -77,7 +78,8 @@ export class AnthropicProvider implements AIProvider {
       );
     }
     this.client = new Anthropic({ apiKey });
-    this.model = process.env.AI_MODEL ?? DEFAULT_MODEL;
+    // ANTHROPIC_MODEL takes priority; fall back to legacy AI_MODEL, then the default
+    this.model = process.env.ANTHROPIC_MODEL ?? process.env.AI_MODEL ?? DEFAULT_ANTHROPIC_MODEL;
   }
 
   async extractTasks(transcript: string, context: MeetingContext): Promise<ExtractedTask[]> {
@@ -141,9 +143,13 @@ export class AnthropicProvider implements AIProvider {
  * Reads the AI_PROVIDER environment variable (default: "anthropic").
  *
  * To add a new provider:
- *   1. Implement the AIProvider interface in a new file (e.g. openaiProvider.ts)
+ *   1. Implement the AIProvider interface in a new file
  *   2. Add a case here
- *   3. Set AI_PROVIDER=openai in your environment
+ *   3. Set AI_PROVIDER=<name> in functions/.env
+ *
+ * Model selection (set in functions/.env):
+ *   Anthropic → ANTHROPIC_MODEL (e.g. claude-haiku-4-5-20251001, claude-sonnet-4-6, claude-opus-4-6)
+ *   OpenAI    → OPENAI_MODEL    (e.g. gpt-4o-mini, gpt-4o, o1-mini)
  */
 export function getAIProvider(): AIProvider {
   const provider = process.env.AI_PROVIDER ?? "anthropic";
@@ -151,9 +157,11 @@ export function getAIProvider(): AIProvider {
   switch (provider) {
     case "anthropic":
       return new AnthropicProvider();
+    case "openai":
+      return new OpenAIProvider();
     default:
       throw new Error(
-        `Unknown AI_PROVIDER: "${provider}". Supported values: "anthropic"`
+        `Unknown AI_PROVIDER: "${provider}". Supported values: "anthropic", "openai"`
       );
   }
 }
