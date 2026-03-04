@@ -96,11 +96,23 @@ function renderMeetingCard(meeting) {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function formatDate(firestoreTs) {
-  if (!firestoreTs) return "";
-  const ms = firestoreTs.seconds ? firestoreTs.seconds * 1000 : firestoreTs;
-  if (!ms) return "";
-  return new Date(ms).toLocaleDateString("en-US", {
+function formatDate(ts) {
+  if (!ts) return "";
+  let ms;
+  if (typeof ts === "number") {
+    ms = ts;
+  } else if (typeof ts === "string") {
+    ms = Date.parse(ts);
+  } else if (ts._seconds !== undefined) {
+    // Firebase Admin SDK serializes Timestamps as { _seconds, _nanoseconds }
+    ms = ts._seconds * 1000;
+  } else if (ts.seconds !== undefined) {
+    ms = ts.seconds * 1000;
+  }
+  if (!ms || isNaN(ms)) return "";
+  const date = new Date(ms);
+  if (isNaN(date.getTime())) return "";
+  return date.toLocaleDateString("en-US", {
     weekday: "short", month: "short", day: "numeric",
   });
 }
