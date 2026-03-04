@@ -5,9 +5,10 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/fireba
 import {
   getFirestore,
   connectFirestoreEmulator,
-  collection,
+  collectionGroup,
   query,
   where,
+  orderBy,
   onSnapshot,
   doc,
   updateDoc,
@@ -41,30 +42,33 @@ if (location.hostname === "127.0.0.1" || location.hostname === "localhost") {
 // ─── DOM References ───────────────────────────────────────────────────────────
 const taskList = document.getElementById("task-list");
 
-// ─── Render Tasks ─────────────────────────────────────────────────────────────
-function renderTask(id, task) {
+// ─── Render Proposals ─────────────────────────────────────────────────────────
+function renderTask(docRef, task) {
   const card = document.createElement("div");
   card.className = "task-card";
-  card.id = `task-${id}`;
+  card.id = `task-${docRef.id}`;
   card.innerHTML = `
     <div class="task-info">
       <h3>${escapeHtml(task.title ?? "Untitled Task")}</h3>
       <p>${escapeHtml(task.description ?? "No description provided.")}</p>
     </div>
     <div class="task-actions">
-      <button class="btn btn-approve" data-id="${id}">Approve</button>
-      <button class="btn btn-reject"  data-id="${id}">Reject</button>
+      <button class="btn btn-approve" data-path="${docRef.path}">Approve</button>
+      <button class="btn btn-reject"  data-path="${docRef.path}">Reject</button>
     </div>
   `;
   taskList.appendChild(card);
 }
 
-// ─── Real-time Listener for Pending Tasks ─────────────────────────────────────
+// ─── Real-time Listener for Pending Proposals ─────────────────────────────────
+// Queries the proposals/{meetingId}/tasks/ subcollection via a collection group
+// query, filtered to this user's pending proposals ordered newest first.
 function listenForPendingTasks(uid) {
   const q = query(
-    collection(db, "tasks"),
-    where("ownerId", "==", uid),
-    where("status", "==", "pending")
+    collectionGroup(db, "tasks"),
+    where("assigneeUid", "==", uid),
+    where("status", "==", "pending"),
+    orderBy("createdAt", "desc")
   );
 
   return onSnapshot(q, (snapshot) => {
@@ -76,7 +80,7 @@ function listenForPendingTasks(uid) {
     }
 
     snapshot.forEach((docSnap) => {
-      renderTask(docSnap.id, docSnap.data());
+      renderTask(docSnap.ref, docSnap.data());
     });
   }, (err) => {
     console.error("Task listener error:", err);
@@ -89,12 +93,11 @@ taskList.addEventListener("click", async (e) => {
   const btn = e.target.closest(".btn");
   if (!btn) return;
 
-  const taskId = btn.dataset.id;
+  const path = btn.dataset.path;
   const action = btn.classList.contains("btn-approve") ? "approved" : "rejected";
 
   try {
-    await updateDoc(doc(db, "tasks", taskId), { status: action });
-    console.log(`Task ${taskId} marked as ${action}`);
+    await updateDoc(doc(db, path), { status: action });
   } catch (err) {
     console.error("Error updating task:", err);
     alert("Failed to update task. Check the console for details.");

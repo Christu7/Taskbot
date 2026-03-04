@@ -44,6 +44,15 @@ service cloud.firestore {
                           && resource.data.assigneeUid == request.auth.uid;
     }
 
+    // ── Proposal collection group query support ───────────────────────────────
+    // The approval dashboard uses a collectionGroup("tasks") query filtered by
+    // assigneeUid. Firestore requires a recursive-wildcard rule to authorise
+    // collection group queries — path-specific rules alone are not sufficient.
+    match /{path=**}/tasks/{taskId} {
+      allow read, update: if isSignedIn()
+                          && resource.data.assigneeUid == request.auth.uid;
+    }
+
     // ── Approval Tokens ───────────────────────────────────────────────────────
     // Single-use tokens embedded in notification email links.
     // Created and validated exclusively by Cloud Functions (Admin SDK).
