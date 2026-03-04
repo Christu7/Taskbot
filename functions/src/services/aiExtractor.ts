@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import { logger } from "firebase-functions";
 import { ExtractedTask, MeetingContext, ExtractionConfidence } from "../models/aiExtraction";
-import { getAIProvider } from "./aiProvider";
+import { getAIProvider, getAIProviderForUser } from "./aiProvider";
 
 // ─── Validation ───────────────────────────────────────────────────────────────
 
@@ -80,7 +80,8 @@ function validateAndNormalise(raw: unknown, index: number): ExtractedTask {
  */
 export async function extractTasksFromTranscript(
   transcript: string,
-  context: MeetingContext
+  context: MeetingContext,
+  uid?: string
 ): Promise<ExtractedTask[]> {
   if (!transcript.trim()) {
     logger.warn("aiExtractor: received empty transcript — skipping extraction");
@@ -94,7 +95,7 @@ export async function extractTasksFromTranscript(
     transcriptLength: transcript.length,
   });
 
-  const provider = getAIProvider();
+  const provider = uid ? await getAIProviderForUser(uid) : getAIProvider();
   const rawTasks = await provider.extractTasks(transcript, context);
 
   logger.info(`aiExtractor: model returned ${rawTasks.length} raw task(s)`);

@@ -1,3 +1,4 @@
+import * as admin from "firebase-admin";
 import Anthropic from "@anthropic-ai/sdk";
 import { logger } from "firebase-functions";
 import { ExtractedTask, MeetingContext } from "../models/aiExtraction";
@@ -69,8 +70,8 @@ export class AnthropicProvider implements AIProvider {
   private client: Anthropic;
   private model: string;
 
-  constructor() {
-    const apiKey = process.env.ANTHROPIC_API_KEY;
+  constructor(apiKeyOverride?: string) {
+    const apiKey = apiKeyOverride ?? process.env.ANTHROPIC_API_KEY;
     if (!apiKey) {
       throw new Error(
         "ANTHROPIC_API_KEY is not set. " +
@@ -162,6 +163,43 @@ export function getAIProvider(): AIProvider {
     default:
       throw new Error(
         `Unknown AI_PROVIDER: "${provider}". Supported values: "anthropic", "openai"`
+      );
+  }
+}
+
+/**
+ * Returns the AI provider configured for a specific user.
+ *
+ * Resolution order:
+ *   1. users/{uid}.aiProvider → provider name
+ *      (fallback: AI_PROVIDER env var → "anthropic")
+ *   2. users/{uid}/apiKeys/{providerName}.key → API key
+ *      (fallback: provider's own env var)
+ *
+ * @param uid - Firebase Auth UID of the user triggering the extraction
+ */
+export async function getAIProviderForUser(uid: string): Promise<AIProvider> {
+  const db = admin.firestore();
+  const userSnap = await db.collection("users").doc(uid).get();
+  const providerName: string =
+    (userSnap.data()?.aiProvider as string | undefined) ??
+    process.env.AI_PROVIDER ??
+    "anthropic";
+
+  const keySnap = await db
+    .collection("users").doc(uid)
+    .collection("apiKeys").doc(providerName)
+    .get();
+  const apiKey: string | undefined = keySnap.data()?.key as string | undefined;
+
+  switch (providerName) {
+    case "anthropic":
+      return new AnthropicProvider(apiKey);
+    case "openai":
+      return new OpenAIProvider(apiKey);
+    default:
+      throw new Error(
+        `Unknown AI provider "${providerName}" for user ${uid}. Supported values: "anthropic", "openai"`
       );
   }
 }

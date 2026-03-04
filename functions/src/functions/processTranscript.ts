@@ -116,7 +116,7 @@ export const processTranscript = onDocumentCreated(
         `(${attendeeNames.length} known attendee(s), ${transcriptText.length} chars)`
       );
 
-      const extractedTasks = await extractTasksFromTranscript(transcriptText, context);
+      const extractedTasks = await extractTasksFromTranscript(transcriptText, context, transcriptDoc.detectedByUid);
 
       logger.info(`processTranscript: AI returned ${extractedTasks.length} task(s)`);
 

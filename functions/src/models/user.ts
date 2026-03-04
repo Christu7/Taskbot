@@ -54,6 +54,11 @@ export interface UserDocument {
    * list-lookup API calls on subsequent task creations.
    */
   taskListId?: string;
+  /**
+   * The active AI provider for this user ("anthropic" | "openai").
+   * When absent, the server falls back to the AI_PROVIDER env var (default: "anthropic").
+   */
+  aiProvider?: string;
   /** When the document was first created. */
   createdAt: Timestamp;
   /** When the document was last updated. */

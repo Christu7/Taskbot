@@ -23,6 +23,13 @@ service cloud.firestore {
       match /tokens/{tokenDoc} {
         allow read, write: if isOwner(userId);
       }
+
+      // API Keys subcollection — stores per-user AI provider keys.
+      // Managed exclusively by Cloud Functions (Admin SDK).
+      // Clients never read or write these directly; only masked versions are exposed.
+      match /apiKeys/{provider} {
+        allow read, write: if false;
+      }
     }
 
     // ── Tasks ────────────────────────────────────────────────────────────────

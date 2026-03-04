@@ -54,6 +54,19 @@ export const api = {
 
   updateSettings: (body) => request("PATCH", "/settings", body),
 
+  // ── API Key Management ────────────────────────────────────────────────────
+  /** Returns { activeProvider, providers: { anthropic: {configured, masked}, openai: {...} } } */
+  getApiKeys: () => request("GET", "/settings/api-keys"),
+
+  /** Saves an API key for the given provider. Returns { masked }. */
+  addApiKey: (provider, key) => request("POST", `/settings/api-keys/${provider}`, { key }),
+
+  /** Removes the API key for the given provider. */
+  removeApiKey: (provider) => request("DELETE", `/settings/api-keys/${provider}`),
+
+  /** Sets the active AI provider (must have a key saved first). */
+  setActiveProvider: (provider) => request("PATCH", "/settings/api-keys/active", { provider }),
+
   // ── Token-based auth (email link, no Firebase auth needed yet) ───────────
   validateToken: async (token) => {
     const res = await fetch("/api/auth/validate-token", {

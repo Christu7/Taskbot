@@ -368,6 +368,116 @@ app.patch("/settings", authenticate, async (req: Request, res: Response) => {
   res.json({ success: true });
 });
 
+// ─── GET /settings/api-keys ───────────────────────────────────────────────────
+// Returns the masked API keys and active provider for the authenticated user.
+
+app.get("/settings/api-keys", authenticate, async (req: Request, res: Response) => {
+  const uid = (req as AuthRequest).uid;
+  const user = await getUser(uid);
+  const activeProvider = user?.aiProvider ?? null;
+
+  const providers = ["anthropic", "openai"] as const;
+  const result: Record<string, { configured: boolean; masked: string | null }> = {};
+
+  await Promise.all(
+    providers.map(async (p) => {
+      const snap = await db().collection("users").doc(uid).collection("apiKeys").doc(p).get();
+      if (snap.exists) {
+        result[p] = { configured: true, masked: (snap.data()?.masked as string) ?? null };
+      } else {
+        result[p] = { configured: false, masked: null };
+      }
+    })
+  );
+
+  res.json({ activeProvider, providers: result });
+});
+
+// ─── PATCH /settings/api-keys/active ─────────────────────────────────────────
+// Sets the active AI provider for the authenticated user.
+// Defined BEFORE POST/DELETE /settings/api-keys/:provider to avoid "active"
+// matching the :provider wildcard on other methods.
+
+app.patch("/settings/api-keys/active", authenticate, async (req: Request, res: Response) => {
+  const uid = (req as AuthRequest).uid;
+  const { provider } = req.body as { provider?: string };
+
+  const valid = ["anthropic", "openai"];
+  if (!provider || !valid.includes(provider)) {
+    res.status(400).json({ error: `provider must be one of: ${valid.join(", ")}` });
+    return;
+  }
+
+  const keySnap = await db()
+    .collection("users").doc(uid)
+    .collection("apiKeys").doc(provider)
+    .get();
+
+  if (!keySnap.exists) {
+    res.status(400).json({ error: `No key saved for provider "${provider}". Add a key first.` });
+    return;
+  }
+
+  await updateUser(uid, { aiProvider: provider } as Parameters<typeof updateUser>[1]);
+  res.json({ success: true });
+});
+
+// ─── POST /settings/api-keys/:provider ───────────────────────────────────────
+// Saves an API key for the given provider. Returns the masked version.
+
+app.post("/settings/api-keys/:provider", authenticate, async (req: Request, res: Response) => {
+  const uid = (req as AuthRequest).uid;
+  const { provider } = req.params;
+  const { key } = req.body as { key?: string };
+
+  const valid = ["anthropic", "openai"];
+  if (!valid.includes(provider)) {
+    res.status(400).json({ error: `provider must be one of: ${valid.join(", ")}` });
+    return;
+  }
+  if (typeof key !== "string" || !key.trim()) {
+    res.status(400).json({ error: "key must be a non-empty string" });
+    return;
+  }
+
+  const masked = key.slice(0, 16) + "****";
+  await db()
+    .collection("users").doc(uid)
+    .collection("apiKeys").doc(provider)
+    .set({ key, masked, createdAt: FieldValue.serverTimestamp() });
+
+  logger.info(`api-keys: stored ${provider} key for user ${uid}`);
+  res.json({ masked });
+});
+
+// ─── DELETE /settings/api-keys/:provider ─────────────────────────────────────
+// Removes the API key for the given provider.
+// If the deleted provider is the active one, clears aiProvider on the user doc.
+
+app.delete("/settings/api-keys/:provider", authenticate, async (req: Request, res: Response) => {
+  const uid = (req as AuthRequest).uid;
+  const { provider } = req.params;
+
+  const valid = ["anthropic", "openai"];
+  if (!valid.includes(provider)) {
+    res.status(400).json({ error: `provider must be one of: ${valid.join(", ")}` });
+    return;
+  }
+
+  await db()
+    .collection("users").doc(uid)
+    .collection("apiKeys").doc(provider)
+    .delete();
+
+  const user = await getUser(uid);
+  if (user?.aiProvider === provider) {
+    await updateUser(uid, { aiProvider: FieldValue.delete() } as unknown as Parameters<typeof updateUser>[1]);
+  }
+
+  logger.info(`api-keys: deleted ${provider} key for user ${uid}`);
+  res.json({ success: true });
+});
+
 // ─── Export ───────────────────────────────────────────────────────────────────
 
 export const api = onRequest({ region: "us-central1", cors: true }, app);

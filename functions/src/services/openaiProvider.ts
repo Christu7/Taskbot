@@ -17,8 +17,8 @@ export class OpenAIProvider implements AIProvider {
   private client: OpenAI;
   private model: string;
 
-  constructor() {
-    const apiKey = process.env.OPENAI_API_KEY;
+  constructor(apiKeyOverride?: string) {
+    const apiKey = apiKeyOverride ?? process.env.OPENAI_API_KEY;
     if (!apiKey) {
       throw new Error(
         "OPENAI_API_KEY is not set. " +
