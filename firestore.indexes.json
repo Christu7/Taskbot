@@ -1,6 +1,14 @@
 {
   "indexes": [
     {
+      "collectionGroup": "processedTranscripts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "meetingTitle", "order": "ASCENDING" },
+        { "fieldPath": "detectedAt", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "tasks",
       "queryScope": "COLLECTION",
       "fields": [

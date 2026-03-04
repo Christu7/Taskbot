@@ -270,6 +270,9 @@ export const oauthCallback = onRequest(
       await saveTokens(uid, tokens);
       logger.info(`OAuth tokens stored successfully for user ${uid}`);
 
+      // 4b. Mark the user's tokens as valid so the dashboard banner clears
+      await updateUser(uid, { hasValidTokens: true });
+
       // 5. Redirect the user back to the web app
       const successUrl = process.env.OAUTH_SUCCESS_REDIRECT ?? "/";
       res.redirect(successUrl);

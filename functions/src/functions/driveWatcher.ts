@@ -1,6 +1,6 @@
 import * as admin from "firebase-admin";
 import { onSchedule } from "firebase-functions/v2/scheduler";
-import { FieldValue } from "firebase-admin/firestore";
+import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { logger } from "firebase-functions";
 import { getActiveUsers, updateUser } from "../services/firestore";
 import { findNewTranscripts } from "../services/drive";
@@ -111,6 +111,10 @@ async function processUserDrive(
     return 0;
   }
 
+  // Tokens are healthy — self-heal the flag in case a previous cycle set it false.
+  // This clears the dashboard banner without requiring the user to re-run OAuth.
+  await updateUser(uid, { hasValidTokens: true });
+
   // ── Step 2: Search Drive for new transcripts ──────────────────────────────
   let transcripts;
   try {
@@ -219,6 +223,25 @@ async function processUserDrive(
       // so always include them as a fallback.
       if (detectorEmail && !attendeeEmails.includes(detectorEmail)) {
         attendeeEmails = [detectorEmail, ...attendeeEmails];
+      }
+
+      // ── Dedup: skip if the same meeting was already processed recently ────
+      // Each meeting participant gets their own Drive copy with a different fileId.
+      // Without this check the same meeting generates multiple processedTranscripts
+      // docs — and multiple email notifications. A 4-hour window is wide enough to
+      // cover delayed uploads while still allowing back-to-back same-title meetings.
+      const fourHoursAgo = Timestamp.fromMillis(Date.now() - 4 * 60 * 60 * 1000);
+      const dedupSnap = await db()
+        .collection("processedTranscripts")
+        .where("meetingTitle", "==", meetingTitle)
+        .where("detectedAt", ">=", fourHoursAgo)
+        .limit(1)
+        .get();
+      if (!dedupSnap.empty && dedupSnap.docs[0].data().status !== "failed") {
+        logger.info(
+          `driveWatcher: skipping duplicate transcript for "${meetingTitle}" (already processed from a different Drive copy)`
+        );
+        return;
       }
 
       // ── Step 4: Write the Firestore document ──────────────────────────────
