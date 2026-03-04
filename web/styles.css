@@ -272,8 +272,12 @@ details[open] .excerpt-toggle { color: #374151; }
   margin-left: auto;
 }
 
-.status-label.approved { color: #16a34a; }
-.status-label.rejected { color: #9ca3af; }
+.status-label.approved  { color: #16a34a; }
+.status-label.created   { color: #16a34a; }
+.status-label.rejected  { color: #9ca3af; }
+.status-label.creating  { color: #2563eb; }
+.status-label.failed    { color: #dc2626; }
+.status-label.expired   { color: #9ca3af; }
 
 /* Edit mode */
 [contenteditable="true"] {

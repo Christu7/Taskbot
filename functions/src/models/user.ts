@@ -48,6 +48,12 @@ export interface UserDocument {
    * this user in users/{uid}/tokens/google. Updated after each OAuth flow.
    */
   hasValidTokens: boolean;
+  /**
+   * Cached Google Tasks list ID for the "TaskBot" list.
+   * Populated by ensureTaskList() on first task creation to avoid repeated
+   * list-lookup API calls on subsequent task creations.
+   */
+  taskListId?: string;
   /** When the document was first created. */
   createdAt: Timestamp;
   /** When the document was last updated. */

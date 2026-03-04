@@ -121,8 +121,17 @@ function buildCard(proposal) {
     `;
   } else if (proposal.status === "approved") {
     footerContent = `<span class="status-label approved">✓ Approved</span>`;
+  } else if (proposal.status === "created") {
+    footerContent = `<span class="status-label created">✓ Created in Google Tasks — <a href="https://tasks.google.com/" target="_blank" rel="noopener">View</a></span>`;
   } else if (proposal.status === "rejected") {
     footerContent = `<span class="status-label rejected">✗ Rejected</span>`;
+  } else if (proposal.status === "failed") {
+    footerContent = `
+      <span class="status-label failed">✗ Failed to create in Google Tasks</span>
+      <button class="btn btn-ghost" data-action="retry">Retry</button>
+    `;
+  } else if (proposal.status === "expired") {
+    footerContent = `<span class="status-label expired">⌛ Expired</span>`;
   }
 
   div.innerHTML = `
@@ -147,7 +156,7 @@ function buildCard(proposal) {
   `;
 
   // Apply visual state for already-decided proposals
-  if (proposal.status === "approved") div.classList.add("approved");
+  if (proposal.status === "approved" || proposal.status === "created") div.classList.add("approved");
   if (proposal.status === "rejected") div.classList.add("rejected");
 
   // Wire up action buttons
@@ -168,6 +177,11 @@ async function handleCardClick(e) {
 
   if (action === "edit") {
     enterEditMode(card, proposalId);
+    return;
+  }
+
+  if (action === "retry") {
+    await retryTaskCreation(card, proposalId);
     return;
   }
 
@@ -236,7 +250,15 @@ async function applyAction(card, proposalId, action, title, description) {
       if (description !== undefined) p.editedDescription = description;
     }
 
-    applyCardVisual(card, finalStatus, proposalId);
+    if (finalStatus === "approved") {
+      // Show an intermediate "Creating..." state and poll for the taskCreator result
+      const footer = document.getElementById(`footer-${proposalId}`);
+      footer.innerHTML = `<span class="status-label creating">⏳ Creating in Google Tasks...</span>`;
+      card.classList.add("approved");
+      pollForTaskCreation(card, proposalId);
+    } else {
+      applyCardVisual(card, finalStatus, proposalId);
+    }
     updateBulkActions();
   } catch (err) {
     showToast("Failed: " + err.message, "error");
@@ -246,14 +268,70 @@ async function applyAction(card, proposalId, action, title, description) {
 
 function applyCardVisual(card, status, proposalId) {
   card.classList.remove("approved", "rejected");
-  if (status === "approved") card.classList.add("approved");
+  if (status === "approved" || status === "created") card.classList.add("approved");
   if (status === "rejected") card.classList.add("rejected");
 
   const footer = document.getElementById(`footer-${proposalId}`);
   if (status === "approved") {
     footer.innerHTML = `<span class="status-label approved">✓ Approved</span>`;
+  } else if (status === "created") {
+    footer.innerHTML = `<span class="status-label created">✓ Created in Google Tasks — <a href="https://tasks.google.com/" target="_blank" rel="noopener">View</a></span>`;
   } else if (status === "rejected") {
     footer.innerHTML = `<span class="status-label rejected">✗ Rejected</span>`;
+  } else if (status === "failed") {
+    footer.innerHTML = `
+      <span class="status-label failed">✗ Failed to create in Google Tasks</span>
+      <button class="btn btn-ghost" data-action="retry">Retry</button>
+    `;
+  } else if (status === "expired") {
+    footer.innerHTML = `<span class="status-label expired">⌛ Expired</span>`;
+  }
+}
+
+// ─── Task creation polling ──────────────────────────────────────────────────
+
+async function pollForTaskCreation(card, proposalId) {
+  const MAX_ATTEMPTS = 20;
+  const INTERVAL_MS  = 3000;
+  let attempts = 0;
+
+  const interval = setInterval(async () => {
+    attempts++;
+    try {
+      const proposal = await api.getProposal(currentMeetingId, proposalId);
+      if (proposal.status === "created" || proposal.status === "failed") {
+        clearInterval(interval);
+        card.dataset.status = proposal.status;
+        const p = proposals.find((x) => x.id === proposalId);
+        if (p) p.status = proposal.status;
+        applyCardVisual(card, proposal.status, proposalId);
+      }
+    } catch {
+      // Non-fatal — keep polling
+    }
+    if (attempts >= MAX_ATTEMPTS) {
+      clearInterval(interval);
+      // Task may still appear later; show a soft message rather than an error
+      const footer = document.getElementById(`footer-${proposalId}`);
+      if (footer && card.dataset.status === "approved") {
+        footer.innerHTML = `<span class="status-label approved">✓ Approved — check Google Tasks shortly</span>`;
+      }
+    }
+  }, INTERVAL_MS);
+}
+
+async function retryTaskCreation(card, proposalId) {
+  const footer = document.getElementById(`footer-${proposalId}`);
+  footer.innerHTML = `<span class="status-label creating">⏳ Creating in Google Tasks...</span>`;
+  try {
+    await api.updateProposal(currentMeetingId, proposalId, { status: "approved" });
+    card.dataset.status = "approved";
+    const p = proposals.find((x) => x.id === proposalId);
+    if (p) p.status = "approved";
+    pollForTaskCreation(card, proposalId);
+  } catch (err) {
+    showToast("Retry failed: " + err.message, "error");
+    applyCardVisual(card, "failed", proposalId);
   }
 }
 

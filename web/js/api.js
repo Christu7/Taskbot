@@ -45,6 +45,10 @@ export const api = {
   bulkAction: (meetingId, action) =>
     request("PATCH", `/proposals/${meetingId}/bulk`, { action }),
 
+  /** Returns a single proposal by ID. Used for polling after approval. */
+  getProposal: (meetingId, taskId) =>
+    request("GET", `/proposals/${encodeURIComponent(meetingId)}/${encodeURIComponent(taskId)}`),
+
   // ── Settings ─────────────────────────────────────────────────────────────
   getSettings: () => request("GET", "/settings"),
 

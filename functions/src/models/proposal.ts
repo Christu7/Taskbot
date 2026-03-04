@@ -9,8 +9,10 @@ import { ExtractionConfidence } from "./aiExtraction";
  * rejected  → Assignee dismissed the task.
  * edited    → Assignee modified the title/description before accepting.
  * created   → TaskBot has created the corresponding Google Task.
+ * expired   → Proposal was not reviewed before expiresAt; never sent to Tasks.
+ * failed    → Google Tasks creation failed; user can retry from the web app.
  */
-export type ProposalStatus = "pending" | "approved" | "rejected" | "edited" | "created";
+export type ProposalStatus = "pending" | "approved" | "rejected" | "edited" | "created" | "expired" | "failed";
 
 /**
  * Shape of the document stored at proposals/{meetingId}/tasks/{taskId}.
@@ -59,4 +61,6 @@ export interface ProposalDocument {
   expiresAt: Timestamp;
   /** Google Tasks task ID, populated after the task is created in Google Tasks. */
   googleTaskId?: string;
+  /** Error message stored when status is "failed", cleared on successful retry. */
+  failureReason?: string;
 }

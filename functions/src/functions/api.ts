@@ -168,6 +168,40 @@ app.get("/proposals", authenticate, async (req: Request, res: Response) => {
   res.json({ meetingId, meetingTitle, driveFileLink, proposals });
 });
 
+// ─── GET /proposals/:meetingId/:taskId ───────────────────────────────────────
+// Returns a single proposal by ID.
+// Used by the review page to poll for status changes after the user approves
+// a task (the taskCreator function runs asynchronously in the background).
+
+app.get(
+  "/proposals/:meetingId/:taskId",
+  authenticate,
+  async (req: Request, res: Response) => {
+    const uid = (req as AuthRequest).uid;
+    const { meetingId, taskId } = req.params;
+
+    const docRef = db()
+      .collection("proposals")
+      .doc(meetingId)
+      .collection("tasks")
+      .doc(taskId);
+
+    const snap = await docRef.get();
+
+    if (!snap.exists) {
+      res.status(404).json({ error: "Proposal not found" });
+      return;
+    }
+
+    if (snap.data()?.assigneeUid !== uid) {
+      res.status(403).json({ error: "Forbidden" });
+      return;
+    }
+
+    res.json({ id: snap.id, ...snap.data() });
+  }
+);
+
 // ─── PATCH /proposals/:meetingId/bulk ────────────────────────────────────────
 // Bulk-approves or bulk-rejects all pending proposals for a meeting.
 // Defined before /:taskId to prevent "bulk" being matched as a taskId.
