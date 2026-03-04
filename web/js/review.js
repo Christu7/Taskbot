@@ -229,7 +229,11 @@ function restoreFooter(card, proposal) {
 }
 
 async function applyAction(card, proposalId, action, title, description) {
-  const body = { status: action };
+  // Map button verb forms to the past-tense strings the API expects
+  const apiStatus = action === "approve" ? "approved"
+    : action === "reject"  ? "rejected"
+    : action; // "edited" is already the right value
+  const body = { status: apiStatus };
   if (title !== undefined)       body.title       = title;
   if (description !== undefined) body.description = description;
 
@@ -239,7 +243,7 @@ async function applyAction(card, proposalId, action, title, description) {
   try {
     await api.updateProposal(currentMeetingId, proposalId, body);
 
-    const finalStatus = action === "edited" ? "approved" : action;
+    const finalStatus = action === "edited" ? "approved" : apiStatus;
     card.dataset.status = finalStatus;
 
     // Update local proposals array
