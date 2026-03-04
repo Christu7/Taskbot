@@ -48,6 +48,7 @@ export const taskCreator = onDocumentUpdated(
       editedTitle,
       editedDescription,
       suggestedDueDate,
+      editedDueDate,
     } = after;
 
     const docRef = db()
@@ -98,7 +99,8 @@ export const taskCreator = onDocumentUpdated(
       const googleTaskId = await createGoogleTask(accessToken, listId, {
         title: finalTitle,
         notes,
-        due: suggestedDueDate ?? null,
+        // editedDueDate (user override) takes precedence over the AI-suggested date
+        due: editedDueDate !== undefined ? (editedDueDate ?? null) : (suggestedDueDate ?? null),
       });
 
       // ── Step 6: Update proposal to "created" ──────────────────────────────

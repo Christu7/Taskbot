@@ -256,10 +256,11 @@ app.patch(
   async (req: Request, res: Response) => {
     const uid = (req as AuthRequest).uid;
     const { meetingId, taskId } = req.params;
-    const { status, title, description } = req.body as {
+    const { status, title, description, dueDate } = req.body as {
       status?: string;
       title?: string;
       description?: string;
+      dueDate?: string | null;
     };
 
     const validStatuses = ["approved", "rejected", "edited"];
@@ -299,6 +300,9 @@ app.patch(
     } else {
       update.status = status;
     }
+
+    // Store user-edited due date if provided (null clears any previously set value)
+    if (dueDate !== undefined) update.editedDueDate = dueDate;
 
     await docRef.update(update);
 

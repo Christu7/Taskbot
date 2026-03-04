@@ -212,6 +212,38 @@ main {
   margin-bottom: 8px;
 }
 
+.due-date-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.due-label {
+  font-size: 12px;
+  color: #6b7280;
+  white-space: nowrap;
+}
+
+.due-input {
+  font-size: 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  padding: 3px 8px;
+  color: #374151;
+  background: #fff;
+}
+
+.due-input:focus {
+  outline: none;
+  border-color: #1a73e8;
+}
+
+.due-input:disabled {
+  background: #f9fafb;
+  color: #9ca3af;
+}
+
 /* Transcript excerpt */
 details { margin-bottom: 10px; }
 

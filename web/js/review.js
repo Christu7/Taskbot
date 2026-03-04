@@ -141,9 +141,15 @@ function buildCard(proposal) {
       </div>
       <div class="task-title" id="title-${proposal.id}">${esc(displayTitle)}</div>
       <div class="task-description" id="desc-${proposal.id}">${esc(displayDesc)}</div>
-      ${proposal.suggestedDueDate
-        ? `<div class="due-date">Suggested due: ${esc(proposal.suggestedDueDate)}</div>`
-        : ""}
+      ${proposal.status === "pending"
+        ? `<div class="due-date-row">
+             <label class="due-label" for="due-${proposal.id}">Deadline:</label>
+             <input type="date" id="due-${proposal.id}" class="due-input"
+                    value="${esc(proposal.editedDueDate || proposal.suggestedDueDate || '')}">
+           </div>`
+        : (proposal.editedDueDate || proposal.suggestedDueDate)
+          ? `<div class="due-date">Due: ${esc(proposal.editedDueDate || proposal.suggestedDueDate)}</div>`
+          : ""}
       ${proposal.transcriptExcerpt ? `
       <details>
         <summary class="excerpt-toggle">Show transcript excerpt</summary>
@@ -236,6 +242,13 @@ async function applyAction(card, proposalId, action, title, description) {
   const body = { status: apiStatus };
   if (title !== undefined)       body.title       = title;
   if (description !== undefined) body.description = description;
+
+  // Always send the current due date so user edits are captured
+  const dueInput = document.getElementById(`due-${proposalId}`);
+  if (dueInput) {
+    body.dueDate = dueInput.value || null;
+    dueInput.disabled = true;
+  }
 
   // Disable buttons while saving
   card.querySelectorAll(".btn").forEach((b) => b.disabled = true);

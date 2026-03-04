@@ -59,6 +59,8 @@ export interface ProposalDocument {
   createdAt: Timestamp;
   /** Proposal automatically expires at this time (createdAt + proposalExpiryHours). */
   expiresAt: Timestamp;
+  /** User-edited due date (overrides suggestedDueDate when set). ISO 8601 date string. */
+  editedDueDate?: string | null;
   /** Google Tasks task ID, populated after the task is created in Google Tasks. */
   googleTaskId?: string;
   /** Error message stored when status is "failed", cleared on successful retry. */
