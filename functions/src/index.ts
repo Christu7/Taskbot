@@ -10,6 +10,7 @@ import { UserPreferences } from "./models/user";
 export { driveWatcher } from "./functions/driveWatcher";
 export { processTranscript } from "./functions/processTranscript";
 export { notifyUsers } from "./functions/notifyUsers";
+export { api } from "./functions/api";
 
 admin.initializeApp();
 

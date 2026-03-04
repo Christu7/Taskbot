@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TaskBot — Dashboard</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+  <header class="site-header">
+    <div class="container">
+      <a href="/dashboard" class="brand">TaskBot</a>
+      <nav class="site-nav">
+        <a href="/dashboard" class="active">Dashboard</a>
+        <a href="/settings">Settings</a>
+      </nav>
+      <span class="user-chip" id="user-chip"></span>
+      <button id="logout-btn" class="btn btn-ghost" style="margin-left:8px;font-size:13px;padding:5px 10px;">Sign out</button>
+    </div>
+  </header>
+
+  <main>
+    <div class="container">
+
+      <!-- Connect Google Account banner — shown when hasValidTokens is false -->
+      <div id="connect-banner" class="banner banner-warning" hidden>
+        <p>Connect your Google Account so TaskBot can monitor your Drive and Calendar.</p>
+        <button id="connect-btn" class="btn btn-primary">Connect Google Account</button>
+      </div>
+
+      <div class="page-header">
+        <h1 class="page-title">Pending Approvals</h1>
+        <button id="refresh-btn" class="btn btn-ghost" style="font-size:13px;padding:6px 12px;">Refresh</button>
+      </div>
+
+      <!-- Loading -->
+      <div id="loading" class="empty-state">
+        <span class="loading-spinner"></span>Loading…
+      </div>
+
+      <!-- Meeting list -->
+      <div id="meetings-list" hidden></div>
+
+      <!-- Empty state -->
+      <div id="empty-state" class="empty-state" hidden>
+        You're all caught up — no pending proposals right now.
+      </div>
+
+    </div>
+  </main>
+
+  <script type="module" src="js/dashboard.js"></script>
+</body>
+</html>

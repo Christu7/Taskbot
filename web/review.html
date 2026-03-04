@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TaskBot — Review</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+  <header class="site-header">
+    <div class="container">
+      <a href="/dashboard" class="brand">TaskBot</a>
+      <nav class="site-nav">
+        <a href="/dashboard">Dashboard</a>
+        <a href="/settings">Settings</a>
+      </nav>
+      <span class="user-chip" id="user-chip"></span>
+      <button id="logout-btn" class="btn btn-ghost" style="margin-left:8px;font-size:13px;padding:5px 10px;" hidden>Sign out</button>
+    </div>
+  </header>
+
+  <main>
+    <div class="container">
+
+      <!-- Loading/auth state -->
+      <div id="loading" class="empty-state">
+        <span class="loading-spinner"></span>Loading…
+      </div>
+
+      <!-- Error state -->
+      <div id="error-state" class="empty-state" hidden>
+        <p id="error-message">Something went wrong.</p>
+        <a href="/" class="btn btn-ghost" style="margin-top:16px;">Go to Dashboard</a>
+      </div>
+
+      <!-- Content — hidden until loaded -->
+      <div id="content" hidden>
+        <div class="page-header">
+          <div>
+            <h1 class="page-title" id="meeting-title"></h1>
+            <a id="drive-link" href="#" target="_blank" rel="noopener" class="drive-link" hidden>
+              ↗ View transcript in Google Drive
+            </a>
+          </div>
+          <div class="bulk-actions" id="bulk-actions">
+            <button id="approve-all-btn" class="btn btn-approve">Approve All</button>
+            <button id="reject-all-btn"  class="btn btn-reject">Reject All</button>
+          </div>
+        </div>
+
+        <div id="proposals-list"></div>
+
+        <div id="empty-state" class="empty-state" hidden>
+          No proposals found for this meeting.
+        </div>
+      </div>
+
+    </div>
+  </main>
+
+  <script type="module" src="js/review.js"></script>
+</body>
+</html>

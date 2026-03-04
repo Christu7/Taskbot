@@ -3,45 +3,49 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>TaskBot — Task Approval</title>
+  <title>TaskBot — Sign in</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <header>
-    <div class="header-top">
-      <div>
-        <h1>TaskBot</h1>
-        <p class="subtitle">Task Approval Dashboard</p>
-      </div>
-      <div id="auth-section">
-        <button id="login-btn">Sign in with Google</button>
-        <div id="user-info" hidden>
-          <span id="user-name"></span>
-          <button id="connect-btn">Connect Google Account for Tasks</button>
-          <button id="logout-btn">Sign out</button>
-        </div>
-      </div>
+  <div class="login-page">
+    <div class="login-card">
+      <div class="login-brand">TaskBot</div>
+      <p class="login-subtitle">Meeting action items, automatically.</p>
+      <button id="login-btn" class="btn btn-primary btn-lg">Sign in with Google</button>
+      <p id="login-error" class="text-muted mt-4" hidden></p>
     </div>
-  </header>
+  </div>
 
-  <main>
-    <section id="pending-tasks" hidden>
-      <h2>Pending Approvals</h2>
-      <div id="task-list">
-        <p class="empty-state">Loading tasks…</p>
-      </div>
-    </section>
-    <section id="login-prompt">
-      <p>Sign in to view your pending task approvals.</p>
-    </section>
-  </main>
+  <script type="module">
+    import { auth, signInWithGoogle, waitForAuthReady } from "./js/auth.js";
+    import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
-  <footer>
-    <p>TaskBot &copy; 2024</p>
-  </footer>
+    // If already signed in, go straight to dashboard
+    waitForAuthReady().then((user) => {
+      if (user) window.location.href = "/dashboard";
+    });
 
-  <!-- Firebase SDKs (loaded via CDN — swap with your actual config) -->
-  <!-- TODO: Replace the config object in app.js with your Firebase project credentials -->
-  <script type="module" src="app.js"></script>
+    document.getElementById("login-btn").addEventListener("click", async () => {
+      const btn = document.getElementById("login-btn");
+      const err = document.getElementById("login-error");
+      btn.disabled = true;
+      btn.textContent = "Signing in…";
+      err.hidden = true;
+      try {
+        await signInWithGoogle();
+        // onAuthStateChanged will fire and redirect
+      } catch (e) {
+        btn.disabled = false;
+        btn.textContent = "Sign in with Google";
+        err.textContent = e.message || "Sign-in failed. Try again.";
+        err.hidden = false;
+      }
+    });
+
+    // Redirect after successful sign-in
+    onAuthStateChanged(auth, (user) => {
+      if (user) window.location.href = "/dashboard";
+    });
+  </script>
 </body>
 </html>

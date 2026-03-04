@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TaskBot — Settings</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+  <header class="site-header">
+    <div class="container">
+      <a href="/dashboard" class="brand">TaskBot</a>
+      <nav class="site-nav">
+        <a href="/dashboard">Dashboard</a>
+        <a href="/settings" class="active">Settings</a>
+      </nav>
+      <span class="user-chip" id="user-chip"></span>
+      <button id="logout-btn" class="btn btn-ghost" style="margin-left:8px;font-size:13px;padding:5px 10px;">Sign out</button>
+    </div>
+  </header>
+
+  <main>
+    <div class="container">
+
+      <div class="page-header">
+        <h1 class="page-title">Settings</h1>
+      </div>
+
+      <!-- Loading -->
+      <div id="loading" class="empty-state">
+        <span class="loading-spinner"></span>Loading…
+      </div>
+
+      <!-- Content -->
+      <div id="content" hidden>
+
+        <!-- Account section -->
+        <div class="settings-section">
+          <div class="settings-section-title">Account</div>
+          <div class="account-info">
+            <div class="account-email" id="account-email"></div>
+            <div class="token-status" id="token-status"></div>
+          </div>
+          <div class="setting-row">
+            <div>
+              <div class="setting-label">Google Integration</div>
+              <div class="setting-desc">Required for Drive monitoring, Calendar lookup, and sending emails.</div>
+            </div>
+            <button id="reconnect-btn" class="btn btn-ghost">Reconnect</button>
+          </div>
+        </div>
+
+        <!-- Preferences section -->
+        <div class="settings-section">
+          <div class="settings-section-title">Preferences</div>
+
+          <div class="setting-row">
+            <div>
+              <div class="setting-label">TaskBot Active</div>
+              <div class="setting-desc">When off, Drive is not monitored and no proposals are created.</div>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="is-active">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
+          <div class="setting-row">
+            <div>
+              <div class="setting-label">Auto-Approve</div>
+              <div class="setting-desc">Automatically approve all extracted tasks without manual review.</div>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="auto-approve">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
+          <div class="setting-row">
+            <div>
+              <div class="setting-label">Proposal Expiry</div>
+              <div class="setting-desc">Unreviewed proposals expire after this long.</div>
+            </div>
+            <select id="expiry-hours">
+              <option value="24">24 hours</option>
+              <option value="48">48 hours</option>
+              <option value="72">72 hours</option>
+            </select>
+          </div>
+
+          <div class="setting-row" style="border-top:1px solid #f3f4f6;">
+            <div></div>
+            <button id="save-btn" class="btn btn-primary">Save Changes</button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </main>
+
+  <script type="module" src="js/settings.js"></script>
+</body>
+</html>

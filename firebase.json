@@ -25,10 +25,10 @@
       "**/node_modules/**"
     ],
     "rewrites": [
-      {
-        "source": "/api/**",
-        "function": "healthCheck"
-      }
+      { "source": "/api/**",     "function": "api" },
+      { "source": "/dashboard",  "destination": "/dashboard.html" },
+      { "source": "/review",     "destination": "/review.html" },
+      { "source": "/settings",   "destination": "/settings.html" }
     ]
   },
   "firestore": {
