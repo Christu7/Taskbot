@@ -132,6 +132,19 @@ export const processTranscript = onDocumentCreated(
 
       // ── Step 5: Fan out proposals to matched, active users ─────────────
       const proposalsBase = db().collection("proposals").doc(meetingId).collection("tasks");
+
+      // Clear any existing proposals before writing — makes the pipeline
+      // idempotent if the same transcript is reprocessed (e.g. during testing).
+      const existingProposals = await proposalsBase.get();
+      if (!existingProposals.empty) {
+        const clearBatch = db().batch();
+        existingProposals.docs.forEach((d) => clearBatch.delete(d.ref));
+        await clearBatch.commit();
+        logger.info(
+          `processTranscript: cleared ${existingProposals.size} existing proposal(s) for ${meetingId}`
+        );
+      }
+
       const batch = db().batch();
       let proposalCount = 0;
       let skippedCount = 0;
