@@ -4,12 +4,19 @@ import { Timestamp } from "firebase-admin/firestore";
 import { logger } from "firebase-functions";
 import { ProcessedTranscriptDocument } from "../models/processedTranscript";
 import { ProposalDocument } from "../models/proposal";
-import { MeetingContext } from "../models/aiExtraction";
+import { MeetingContext, ExtractedTask } from "../models/aiExtraction";
 import { UserDocument } from "../models/user";
 import { getValidAccessToken } from "../auth";
 import { getTranscriptContent } from "../services/drive";
 import { getUserByEmail } from "../services/firestore";
 import { extractTasksFromTranscript } from "../services/aiExtractor";
+import { AIExtractionError, TranscriptNotFoundError } from "../utils/errors";
+
+const AI_RETRY_DELAY_MS = 30_000;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 const db = () => admin.firestore();
 
@@ -79,7 +86,17 @@ export const processTranscript = onDocumentCreated(
         );
       }
 
-      const transcriptText = await getTranscriptContent(accessToken, transcriptDoc.driveFileId);
+      let transcriptText: string;
+      try {
+        transcriptText = await getTranscriptContent(accessToken, transcriptDoc.driveFileId);
+      } catch (err) {
+        if (err instanceof TranscriptNotFoundError) {
+          throw new Error(
+            `Transcript file not found in Drive (may have been deleted): ${transcriptDoc.driveFileId}`
+          );
+        }
+        throw err;
+      }
 
       if (!transcriptText.trim()) {
         throw new Error("Transcript file is empty or could not be read.");
@@ -116,7 +133,27 @@ export const processTranscript = onDocumentCreated(
         `(${attendeeNames.length} known attendee(s), ${transcriptText.length} chars)`
       );
 
-      const extractedTasks = await extractTasksFromTranscript(transcriptText, context, transcriptDoc.detectedByUid);
+      // ── AI extraction with one automatic retry after 30 s ──────────────
+      let extractedTasks: ExtractedTask[];
+      try {
+        extractedTasks = await extractTasksFromTranscript(
+          transcriptText, context, transcriptDoc.detectedByUid
+        );
+      } catch (firstErr) {
+        if (firstErr instanceof AIExtractionError) {
+          logger.warn(
+            `processTranscript: AI extraction failed for ${meetingId} — retrying in 30s`,
+            { error: (firstErr as Error).message }
+          );
+          await sleep(AI_RETRY_DELAY_MS);
+          // Let this throw to the outer catch if it fails again
+          extractedTasks = await extractTasksFromTranscript(
+            transcriptText, context, transcriptDoc.detectedByUid
+          );
+        } else {
+          throw firstErr;
+        }
+      }
 
       logger.info(`processTranscript: AI returned ${extractedTasks.length} task(s)`);
 

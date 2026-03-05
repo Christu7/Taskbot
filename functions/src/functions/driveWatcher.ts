@@ -7,6 +7,16 @@ import { findNewTranscripts } from "../services/drive";
 import { parseTranscriptFilename, findMeetingEvent } from "../services/calendar";
 import { getValidAccessToken } from "../auth";
 import { ProcessedTranscriptDocument } from "../models/processedTranscript";
+import { TokenExpiredError, APIQuotaError } from "../utils/errors";
+
+/** Maximum number of users to process simultaneously. */
+const CONCURRENCY_LIMIT = 5;
+/** Delay between user-processing chunks to avoid hammering Google APIs. */
+const INTER_CHUNK_DELAY_MS = 1_000;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 /**
  * How far back to look for new transcripts on each poll cycle.
@@ -52,12 +62,22 @@ export const driveWatcher = onSchedule(
       `${activeUserEmails.size} registered email(s) for attendee filtering`
     );
 
-    // 2. Process each user independently — one failure must not abort others
-    const results = await Promise.allSettled(
-      activeUsers.map((user) =>
-        processUserDrive(user.uid, user.email, sinceTimestamp, activeUserEmails)
-      )
-    );
+    // 2. Process users in chunks of CONCURRENCY_LIMIT to avoid rate-limiting.
+    //    One user's failure must never abort others.
+    const results: PromiseSettledResult<number>[] = [];
+    for (let i = 0; i < activeUsers.length; i += CONCURRENCY_LIMIT) {
+      const chunk = activeUsers.slice(i, i + CONCURRENCY_LIMIT);
+      const chunkResults = await Promise.allSettled(
+        chunk.map((user) =>
+          processUserDrive(user.uid, user.email, sinceTimestamp, activeUserEmails)
+        )
+      );
+      results.push(...chunkResults);
+      // Pause between chunks to spread API load
+      if (i + CONCURRENCY_LIMIT < activeUsers.length) {
+        await sleep(INTER_CHUNK_DELAY_MS);
+      }
+    }
 
     // 3. Log a cycle summary
     let totalNew = 0;
@@ -103,16 +123,22 @@ async function processUserDrive(
   try {
     accessToken = await getValidAccessToken(uid);
   } catch (err) {
-    logger.warn(
-      `driveWatcher: token retrieval failed for user ${uid} — marking hasValidTokens=false`,
-      { error: (err as Error).message }
-    );
+    if (err instanceof TokenExpiredError) {
+      logger.warn(
+        `driveWatcher: tokens expired/revoked for user ${uid} — marking hasValidTokens=false`,
+        { error: (err as Error).message }
+      );
+    } else {
+      logger.warn(
+        `driveWatcher: token retrieval failed for user ${uid} — marking hasValidTokens=false`,
+        { error: (err as Error).message }
+      );
+    }
     await updateUser(uid, { hasValidTokens: false });
     return 0;
   }
 
   // Tokens are healthy — self-heal the flag in case a previous cycle set it false.
-  // This clears the dashboard banner without requiring the user to re-run OAuth.
   await updateUser(uid, { hasValidTokens: true });
 
   // ── Step 2: Search Drive for new transcripts ──────────────────────────────
@@ -120,18 +146,21 @@ async function processUserDrive(
   try {
     transcripts = await findNewTranscripts(accessToken, sinceTimestamp);
   } catch (err) {
-    const message = (err as Error).message ?? "";
-    const isAuthError =
-      message.includes("401") || message.toLowerCase().includes("unauthorized");
-
-    if (isAuthError) {
+    if (err instanceof TokenExpiredError) {
       logger.warn(
-        `driveWatcher: Drive API auth error for user ${uid} — marking hasValidTokens=false`,
-        { error: message }
+        `driveWatcher: Drive auth error for user ${uid} — marking hasValidTokens=false`,
+        { error: (err as Error).message }
       );
       await updateUser(uid, { hasValidTokens: false });
+    } else if (err instanceof APIQuotaError) {
+      logger.warn(
+        `driveWatcher: Drive quota exceeded for user ${uid} — skipping this cycle`,
+        { error: (err as Error).message }
+      );
     } else {
-      logger.error(`driveWatcher: Drive API error for user ${uid}`, { error: message });
+      logger.error(`driveWatcher: Drive API error for user ${uid}`, {
+        error: (err as Error).message,
+      });
     }
     return 0;
   }

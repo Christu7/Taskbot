@@ -42,10 +42,22 @@ async function bootFromToken(token) {
     setupHeader(auth.currentUser);
     renderPage(result.meetingTitle, result.driveFileLink, result.proposals);
   } catch (err) {
-    showError(
-      "This link is invalid or has already been used. " +
-      "Please sign in to view your proposals: " + err.message
-    );
+    const msg = (err.message || "").toLowerCase();
+    if (msg.includes("expired")) {
+      showError(
+        "This approval link has expired. Sign in to your dashboard to review your pending proposals.",
+        true
+      );
+    } else if (msg.includes("already been used")) {
+      showError(
+        "This link has already been used. Sign in to see the current status of your proposals.",
+        true
+      );
+    } else {
+      showError(
+        "This link is invalid or has expired. Please sign in to review your proposals."
+      );
+    }
   }
 }
 
@@ -391,11 +403,20 @@ function updateBulkActions() {
 
 // ─── Error state ───────────────────────────────────────────────────────────────
 
-function showError(msg) {
+function showError(msg, showSignIn = false) {
   loadingEl.hidden  = true;
   contentEl.hidden  = true;
   errorState.hidden = false;
   errorMsg.textContent = msg;
+
+  if (showSignIn) {
+    const link = document.createElement("a");
+    link.href = "/?next=" + encodeURIComponent("/dashboard");
+    link.className = "btn btn-primary";
+    link.style.marginTop = "16px";
+    link.textContent = "Sign in to Dashboard";
+    errorState.appendChild(link);
+  }
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

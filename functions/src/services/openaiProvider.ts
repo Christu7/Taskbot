@@ -3,6 +3,7 @@ import { logger } from "firebase-functions";
 import { ExtractedTask, MeetingContext } from "../models/aiExtraction";
 import { buildExtractionPrompt } from "../prompts/taskExtraction";
 import { AIProvider } from "./aiProvider";
+import { AIExtractionError } from "../utils/errors";
 
 /** Default OpenAI model. Override with OPENAI_MODEL env var. */
 const DEFAULT_OPENAI_MODEL = "gpt-4o-mini";
@@ -73,8 +74,11 @@ export class OpenAIProvider implements AIProvider {
 
     const retryText = retryResponse.choices[0]?.message?.content ?? "";
 
-    // Let this throw if still invalid — caller handles it
-    return this.parseResponse(retryText);
+    try {
+      return this.parseResponse(retryText);
+    } catch (err) {
+      throw new AIExtractionError("openai", (err as Error).message);
+    }
   }
 
   private parseResponse(text: string): ExtractedTask[] {

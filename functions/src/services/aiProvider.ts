@@ -4,6 +4,7 @@ import { logger } from "firebase-functions";
 import { ExtractedTask, MeetingContext } from "../models/aiExtraction";
 import { buildExtractionPrompt } from "../prompts/taskExtraction";
 import { OpenAIProvider } from "./openaiProvider";
+import { AIExtractionError } from "../utils/errors";
 
 // ─── Interface ────────────────────────────────────────────────────────────────
 
@@ -124,8 +125,11 @@ export class AnthropicProvider implements AIProvider {
 
     const retryText = this.extractText(retryResponse);
 
-    // Let this throw if still invalid — caller handles it
-    return parseRawResponse(retryText) as ExtractedTask[];
+    try {
+      return parseRawResponse(retryText) as ExtractedTask[];
+    } catch (err) {
+      throw new AIExtractionError("anthropic", (err as Error).message);
+    }
   }
 
   /** Concatenates all text blocks from a Claude API response. */

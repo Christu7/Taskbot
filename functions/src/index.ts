@@ -13,18 +13,41 @@ export { notifyUsers } from "./functions/notifyUsers";
 export { taskCreator } from "./functions/taskCreator";
 export { expireProposals } from "./functions/expireProposals";
 export { api } from "./functions/api";
+export { healthCheck } from "./functions/healthCheck";
 
 admin.initializeApp();
 
-// ─── Health Check ─────────────────────────────────────────────────────────────
-// GET https://us-central1-taskbot-fb10d.cloudfunctions.net/healthCheck
-export const healthCheck = onRequest({ region: "us-central1" }, (req, res) => {
-  res.status(200).json({
-    status: "ok",
-    message: "TaskBot functions are running",
-    timestamp: new Date().toISOString(),
-  });
-});
+// ─── Environment Variable Validation ──────────────────────────────────────────
+// Log a clear error at startup if required variables are missing so issues
+// are caught immediately after deployment rather than at runtime.
+{
+  const required: Record<string, string> = {
+    GOOGLE_CLIENT_ID: "Google OAuth Client ID",
+    GOOGLE_CLIENT_SECRET: "Google OAuth Client Secret",
+    OAUTH_REDIRECT_URI: "OAuth callback URI (must match GCP Console)",
+    OAUTH_SUCCESS_REDIRECT: "Post-OAuth redirect URL",
+  };
+
+  const missing = Object.entries(required)
+    .filter(([key]) => !process.env[key])
+    .map(([key, desc]) => `${key} — ${desc}`);
+
+  const aiProvider = process.env.AI_PROVIDER ?? "anthropic";
+  if (aiProvider === "anthropic" && !process.env.ANTHROPIC_API_KEY) {
+    missing.push("ANTHROPIC_API_KEY — Anthropic API key");
+  }
+  if (aiProvider === "openai" && !process.env.OPENAI_API_KEY) {
+    missing.push("OPENAI_API_KEY — OpenAI API key");
+  }
+
+  if (missing.length > 0) {
+    logger.error(
+      "TaskBot: missing required environment variables — some functions will fail:\n" +
+      missing.map((v) => `  • ${v}`).join("\n") +
+      "\nSee functions/.env for configuration."
+    );
+  }
+}
 
 // ─── Task Created Trigger ─────────────────────────────────────────────────────
 // Fires whenever a new document appears in the "tasks" collection
