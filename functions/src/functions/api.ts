@@ -304,7 +304,22 @@ app.patch(
     // Store user-edited due date if provided (null clears any previously set value)
     if (dueDate !== undefined) update.editedDueDate = dueDate;
 
-    await docRef.update(update);
+    // Use a transaction to guard against the expiry race condition:
+    // expireProposals could mark this "expired" between our .get() and the write.
+    const conflictStatus = await db().runTransaction(async (txn) => {
+      const latest = await txn.get(docRef);
+      const latestStatus = latest.data()?.status as string | undefined;
+      if (latestStatus !== "pending") return latestStatus ?? "unknown";
+      txn.update(docRef, update);
+      return null;
+    });
+
+    if (conflictStatus !== null) {
+      res.status(409).json({
+        error: `Proposal is already "${conflictStatus}" and can no longer be updated.`,
+      });
+      return;
+    }
 
     logger.info(
       `proposal ${status}: ${taskId} in meeting ${meetingId} by user ${uid}`

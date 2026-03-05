@@ -39,7 +39,14 @@ const db = () => admin.firestore();
  * same document, the second invocation exits immediately.
  */
 export const processTranscript = onDocumentCreated(
-  { document: "processedTranscripts/{meetingId}", region: "us-central1" },
+  {
+    document: "processedTranscripts/{meetingId}",
+    region: "us-central1",
+    // AI extraction + 30 s retry sleep can easily exceed the 60 s default.
+    timeoutSeconds: 300,
+    // Large transcripts + Anthropic SDK in memory; 512 MiB is the minimum safe value.
+    memory: "1GiB",
+  },
   async (event) => {
     const snap = event.data;
     if (!snap) return;

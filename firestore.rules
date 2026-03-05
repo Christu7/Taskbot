@@ -18,10 +18,10 @@ service cloud.firestore {
       allow read, write: if isOwner(userId);
 
       // Tokens subcollection — stores OAuth access/refresh tokens.
-      // Strictly owner-only. Cloud Functions access these via the Admin SDK
-      // (which bypasses these rules), so client apps never need direct access.
+      // Managed exclusively by Cloud Functions (Admin SDK).
+      // Raw tokens must never be exposed to the client — treat like apiKeys.
       match /tokens/{tokenDoc} {
-        allow read, write: if isOwner(userId);
+        allow read, write: if false;
       }
 
       // API Keys subcollection — stores per-user AI provider keys.

@@ -22,7 +22,12 @@ const ARCHIVABLE_STATUSES = new Set(["rejected", "created", "expired", "failed"]
  *    so the active queries stay fast.
  */
 export const expireProposals = onSchedule(
-  { schedule: "every 60 minutes", region: "us-central1" },
+  {
+    schedule: "every 60 minutes",
+    region: "us-central1",
+    // Batched Firestore reads + writes across potentially large collections.
+    timeoutSeconds: 300,
+  },
   async () => {
     const now = Timestamp.now();
 

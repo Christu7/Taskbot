@@ -30,7 +30,12 @@ const APP_URL = () => process.env.APP_URL ?? "https://taskbot-fb10d.web.app";
  * or block other assignees from being notified.
  */
 export const notifyUsers = onDocumentUpdated(
-  { document: "processedTranscripts/{meetingId}", region: "us-central1" },
+  {
+    document: "processedTranscripts/{meetingId}",
+    region: "us-central1",
+    // Gmail API sends + token refresh for each attendee; 120 s gives headroom.
+    timeoutSeconds: 120,
+  },
   async (event) => {
     const before = event.data?.before.data() as ProcessedTranscriptDocument | undefined;
     const after = event.data?.after.data() as ProcessedTranscriptDocument | undefined;

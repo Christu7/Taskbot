@@ -28,7 +28,12 @@ const db = () => admin.firestore();
  * the user can retry from the web app.
  */
 export const taskCreator = onDocumentUpdated(
-  { document: "proposals/{meetingId}/tasks/{taskId}", region: "us-central1" },
+  {
+    document: "proposals/{meetingId}/tasks/{taskId}",
+    region: "us-central1",
+    // Google Tasks API + token refresh; 120 s is a safe upper bound.
+    timeoutSeconds: 120,
+  },
   async (event) => {
     const before = event.data?.before.data() as ProposalDocument | undefined;
     const after  = event.data?.after.data()  as ProposalDocument | undefined;

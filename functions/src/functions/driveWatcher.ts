@@ -47,7 +47,13 @@ const db = () => admin.firestore();
  *   empty attendeeEmails list rather than dropped entirely.
  */
 export const driveWatcher = onSchedule(
-  { schedule: "every 10 minutes", region: "us-central1" },
+  {
+    schedule: "every 10 minutes",
+    region: "us-central1",
+    // Chunked processing with 1 s inter-chunk sleep + Drive/Calendar API calls.
+    timeoutSeconds: 300,
+    memory: "512MiB",
+  },
   async () => {
     logger.info("driveWatcher: starting poll cycle");
 
