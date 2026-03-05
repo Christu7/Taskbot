@@ -103,7 +103,6 @@ async function loadSettings() {
     const match = expiryEl.querySelector(`option[value="${expiry}"]`);
     if (match) match.selected = true;
 
-    loadingEl.hidden = false;
     loadingEl.hidden = true;
     contentEl.hidden = false;
   } catch (err) {

@@ -97,8 +97,8 @@ export function parseTranscriptFilename(filename: string): ParsedTranscriptFilen
 
   if (!meetingName) return null;
 
-  // Parse date formats: "Feb 25, 2026" | "February 25, 2026" | "Feb 25 2026"
-  const dateMatch = rawDate.match(/^(\w+)\s+(\d{1,2}),?\s+(\d{4})$/);
+  // Parse date formats: "Feb 25, 2026" | "February 25, 2026" | "Feb 25 2026" | "Feb 25,2026"
+  const dateMatch = rawDate.match(/^(\w+)\s+(\d{1,2}),?\s*(\d{4})$/);
   if (!dateMatch) return null;
 
   const monthKey = dateMatch[1].toLowerCase();

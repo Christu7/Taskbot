@@ -10,14 +10,6 @@
     },
     {
       "collectionGroup": "tasks",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "ownerId", "order": "ASCENDING" },
-        { "fieldPath": "status", "order": "ASCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "tasks",
       "queryScope": "COLLECTION_GROUP",
       "fields": [
         { "fieldPath": "assigneeUid", "order": "ASCENDING" },
