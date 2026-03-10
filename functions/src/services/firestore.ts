@@ -6,16 +6,28 @@ const db = () => admin.firestore();
 const usersCol = () => db().collection("users");
 
 /**
+ * Returns true when no user documents exist yet — i.e. the caller is the
+ * first user to sign up. Used by the Auth onCreate trigger to auto-promote
+ * the first user to the "admin" role.
+ */
+export async function isFirstUser(): Promise<boolean> {
+  const snap = await usersCol().limit(1).get();
+  return snap.empty;
+}
+
+/**
  * Creates a new user document in Firestore with sensible defaults.
  * Should be called once, on first sign-in via the Auth onCreate trigger.
  *
- * @param uid - Firebase Auth UID (also used as the document ID)
+ * @param uid  - Firebase Auth UID (also used as the document ID)
  * @param data - Partial user data sourced from the Firebase Auth record
+ * @param role - Role to assign; defaults to "user"
  * @returns The fully-populated UserDocument that was written to Firestore
  */
 export async function createUser(
   uid: string,
-  data: Pick<UserDocument, "email" | "displayName">
+  data: Pick<UserDocument, "email" | "displayName">,
+  role: "admin" | "user" = "user"
 ): Promise<UserDocument> {
   const now = FieldValue.serverTimestamp() as unknown as admin.firestore.Timestamp;
 
@@ -26,6 +38,7 @@ export async function createUser(
     isActive: true,
     preferences: { ...DEFAULT_PREFERENCES },
     hasValidTokens: false,
+    role,
     createdAt: now,
     updatedAt: now,
   };

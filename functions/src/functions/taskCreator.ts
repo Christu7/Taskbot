@@ -3,7 +3,7 @@ import { onDocumentUpdated } from "firebase-functions/v2/firestore";
 import { FieldValue } from "firebase-admin/firestore";
 import { logger } from "firebase-functions";
 import { getValidAccessToken } from "../auth";
-import { ensureTaskList, createGoogleTask } from "../services/googleTasks";
+import { routeTask } from "../services/taskDestinations/taskRouter";
 import { ProposalDocument } from "../models/proposal";
 import { ProcessedTranscriptDocument } from "../models/processedTranscript";
 
@@ -20,9 +20,8 @@ const db = () => admin.firestore();
  *   1. Guard: skip unless this is a non-approved → approved transition
  *   2. Fetch meeting metadata from the parent processedTranscripts document
  *   3. Get a valid access token for the assignee
- *   4. Ensure the "TaskBot" task list exists in the assignee's Google Tasks
- *   5. Create the task via Google Tasks API
- *   6. Update the proposal: status → "created", googleTaskId set
+ *   4. Route the task to all configured destinations via taskRouter
+ *   5. Update the proposal: status → "created", externalRefs set
  *
  * On any failure: sets status → "failed" and stores the error message so
  * the user can retry from the web app.
@@ -31,8 +30,9 @@ export const taskCreator = onDocumentUpdated(
   {
     document: "proposals/{meetingId}/tasks/{taskId}",
     region: "us-central1",
-    // Google Tasks API + token refresh; 120 s is a safe upper bound.
+    // Google Tasks + Asana API calls; Asana fallback warning email adds a Gmail send.
     timeoutSeconds: 120,
+    memory: "512MiB",
   },
   async (event) => {
     const before = event.data?.before.data() as ProposalDocument | undefined;
@@ -43,7 +43,7 @@ export const taskCreator = onDocumentUpdated(
     if (before.status === "approved" || after.status !== "approved") return;
 
     // Idempotency guard: skip if already created
-    if (after.googleTaskId) return;
+    if (after.externalRefs?.length || after.googleTaskId) return;
 
     const { meetingId, taskId } = event.params;
     const {
@@ -85,39 +85,39 @@ export const taskCreator = onDocumentUpdated(
       // ── Step 2: Get a valid access token for the assignee ─────────────────
       const accessToken = await getValidAccessToken(assigneeUid);
 
-      // ── Step 3: Ensure the "TaskBot" task list exists ─────────────────────
-      const listId = await ensureTaskList(accessToken, assigneeUid);
-
-      // ── Step 4: Build task content ────────────────────────────────────────
+      // ── Step 3: Build canonical TaskData ─────────────────────────────────
       const finalTitle = editedTitle || title;
       const finalDesc  = editedDescription || description;
+      const dueDate    = editedDueDate !== undefined
+        ? (editedDueDate ?? undefined)
+        : (suggestedDueDate ?? undefined);
 
-      const sourceLines: string[] = [];
-      if (driveFileLink) sourceLines.push(`Source: ${driveFileLink}`);
-      sourceLines.push(
-        `Extracted by TaskBot from: ${meetingTitle}${meetingDate ? ` (${meetingDate})` : ""}`
-      );
-
-      const notes = [finalDesc, "", "---", ...sourceLines].join("\n");
-
-      // ── Step 5: Create the task in Google Tasks ───────────────────────────
-      const googleTaskId = await createGoogleTask(accessToken, listId, {
+      const taskData = {
         title: finalTitle,
-        notes,
-        // editedDueDate (user override) takes precedence over the AI-suggested date
-        due: editedDueDate !== undefined ? (editedDueDate ?? null) : (suggestedDueDate ?? null),
-      });
+        description: finalDesc,
+        ...(dueDate ? { dueDate } : {}),
+        sourceLink: driveFileLink,
+        meetingTitle,
+        meetingDate,
+      };
 
-      // ── Step 6: Update proposal to "created" ──────────────────────────────
+      // ── Step 4: Route to all configured destinations ──────────────────────
+      const tokens = { accessToken, uid: assigneeUid };
+      const externalRefs = await routeTask(assigneeUid, taskData, tokens);
+
+      // ── Step 5: Update proposal to "created" ──────────────────────────────
       await docRef.update({
         status: "created",
-        googleTaskId,
+        externalRefs,
         failureReason: FieldValue.delete(),
+        localUpdatedAt: FieldValue.serverTimestamp(),
+        syncStatus: "synced",
+        lastSyncedAt: FieldValue.serverTimestamp(),
       });
 
       logger.info(
-        `taskCreator: created Google Task ${googleTaskId} for proposal ${taskId} ` +
-        `in meeting ${meetingId} (assignee ${assigneeUid})`
+        `taskCreator: created tasks for proposal ${taskId} in meeting ${meetingId} ` +
+        `(assignee ${assigneeUid}) → ${externalRefs.map((r) => `${r.destination}:${r.externalId}`).join(", ")}`
       );
     } catch (err) {
       const message = (err as Error).message ?? "Unknown error";

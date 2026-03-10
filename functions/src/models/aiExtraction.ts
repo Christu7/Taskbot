@@ -42,6 +42,12 @@ export interface ExtractedTask {
    * Useful for debugging mismatches between names and email addresses.
    */
   rawAssigneeText: string;
+  /**
+   * Email addresses of co-assignees when the task is shared across multiple people.
+   * Empty array for solo tasks. Each co-assignee gets their own ExtractedTask entry
+   * with the others listed here.
+   */
+  sharedWith: string[];
 }
 
 /**
@@ -58,4 +64,11 @@ export interface MeetingContext {
   attendeeNames: string[];
   /** ISO 8601 date string (YYYY-MM-DD) of when the meeting took place. */
   meetingDate: string;
+  /**
+   * AI-generated meeting notes from the "Notes" tab of a Gemini Notes document.
+   * Only present when the source document is in Gemini Notes format (two-tab doc).
+   * The extraction prompt uses these as high-level context; the transcript remains
+   * the authoritative source for specific commitments and deadlines.
+   */
+  geminiNotes?: string;
 }

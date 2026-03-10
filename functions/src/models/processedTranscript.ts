@@ -61,4 +61,20 @@ export interface ProcessedTranscriptDocument {
    * Only present when status === "failed".
    */
   error?: string;
+  /**
+   * Which Google Meet document format this transcript came from.
+   *
+   * plain_transcript — The classic "Meeting transcript - Name - Date" Google Doc.
+   *   Content was exported as plain text from Drive.
+   *
+   * gemini_notes — A Gemini Notes document (no "transcript" in the filename).
+   *   The doc has two tabs: "Notes" (AI summary) and "Transcript" (raw).
+   *   Both were extracted and passed to the AI extractor.
+   */
+  transcriptFormat?: "plain_transcript" | "gemini_notes";
+  /**
+   * True when a Gemini Notes "Notes" tab was found and passed to the AI.
+   * Useful for debugging and analytics.
+   */
+  hasNotes?: boolean;
 }

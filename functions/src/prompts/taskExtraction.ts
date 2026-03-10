@@ -21,7 +21,8 @@ const TASK_SCHEMA = `
   "transcriptExcerpt": string,  // The 2–3 verbatim sentences this task came from
   "isSensitive": boolean,       // true for HR, personal, salary, disciplinary topics
   "suggestedDueDate": string | null, // "YYYY-MM-DD" only if explicitly stated; null otherwise
-  "rawAssigneeText": string     // Exact text used to refer to this person in the transcript
+  "rawAssigneeText": string,    // Exact text used to refer to this person in the transcript
+  "sharedWith": string[]        // emails of co-assignees; [] for solo tasks
 }`.trim();
 
 /** Few-shot examples embedded in the prompt to demonstrate expected behaviour. */
@@ -111,8 +112,12 @@ Output:
  * The system prompt establishes the model's role and hard rules.
  * The user message injects the meeting context and transcript.
  *
- * @param transcript - Full plain-text transcript content
- * @param context    - Meeting metadata (title, attendees, date)
+ * When `context.geminiNotes` is present (Gemini Notes format), the prompt
+ * instructs the model to treat the notes as high-level context and the
+ * transcript as the authoritative source for specific commitments.
+ *
+ * @param transcript - Full plain-text transcript content (authoritative source)
+ * @param context    - Meeting metadata; may include `geminiNotes` for two-source docs
  */
 export function buildExtractionPrompt(
   transcript: string,
@@ -136,14 +141,35 @@ Your job is to identify tasks that someone explicitly agreed to do, was assigned
 
 4. **Match assignees to the attendee list.** Use the provided attendee names to resolve first names to full names. Set assigneeEmail to "" if you cannot confidently match the person.
 
-5. **Output only the JSON array.** Wrap it in a \`\`\`json code block. No explanation, no preamble, no text after the closing backticks.`;
+5. **Output only the JSON array.** Wrap it in a \`\`\`json code block. No explanation, no preamble, no text after the closing backticks.
 
-  const user = `# Meeting Context
+6. **Split shared tasks by person.** When a task involves multiple people (e.g. "Maria and Juan will prepare the deck"), create a SEPARATE entry for each person with the same title. In each description, note "Shared task with [co-assignee name(s)]." Set sharedWith to the matched emails of the other co-assignees. Empty array [] for solo tasks.`;
+
+  // When Gemini Notes are available, prepend source-priority guidance so the
+  // model uses the notes for context and the transcript as the source of truth.
+  const geminiNotesPreamble = context.geminiNotes
+    ? `You have two sources for this meeting:
+1. MEETING NOTES (AI-generated summary): Use this for high-level context, attendee names, and topic overview.
+2. RAW TRANSCRIPT: Use this as the source of truth for specific action items, who committed to what, and exact deadlines mentioned.
+If the notes and transcript conflict on specifics, trust the transcript.
+
+`
+    : "";
+
+  const geminiNotesSection = context.geminiNotes
+    ? `# Meeting Notes (AI Summary)
+
+${context.geminiNotes}
+
+`
+    : "";
+
+  const user = `${geminiNotesPreamble}# Meeting Context
 - **Title:** ${context.meetingTitle}
 - **Date:** ${context.meetingDate}
 - **Attendees:** ${attendeeList}
 
-# Transcript
+${geminiNotesSection}# Transcript
 
 ${transcript}
 

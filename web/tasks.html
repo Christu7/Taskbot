@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TaskBot — Tasks</title>
+  <link rel="stylesheet" href="styles.css" />
+  <style>
+    /* ── Draft save bar ── */
+    #draft-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: #fffbeb;
+      border: 1px solid #fcd34d;
+      border-radius: 8px;
+      padding: 10px 16px;
+      margin-bottom: 16px;
+      font-size: 13px;
+      color: #92400e;
+      font-weight: 500;
+    }
+
+    .task-card.has-pending {
+      border-left: 3px solid #f59e0b;
+    }
+
+    .kanban-toolbar.disabled select,
+    .kanban-toolbar.disabled input {
+      opacity: 0.4;
+      pointer-events: none;
+    }
+
+    /* ── Kanban layout ── */
+    .kanban-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 24px;
+    }
+    .kanban-toolbar input[type="search"] {
+      flex: 1;
+      min-width: 180px;
+      padding: 7px 12px;
+      border: 1px solid #d1d5db;
+      border-radius: 6px;
+      font-size: 13px;
+    }
+    .kanban-toolbar select {
+      padding: 7px 10px;
+      border: 1px solid #d1d5db;
+      border-radius: 6px;
+      font-size: 13px;
+    }
+
+    .kanban-board {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+      align-items: start;
+    }
+
+    .kanban-col {
+      background: #f3f4f6;
+      border-radius: 10px;
+      padding: 12px;
+      min-height: 300px;
+    }
+
+    .kanban-col-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 12px;
+      font-size: 13px;
+      font-weight: 600;
+      color: #374151;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .kanban-count {
+      background: #e5e7eb;
+      color: #6b7280;
+      border-radius: 10px;
+      padding: 1px 7px;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .kanban-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      min-height: 60px;
+    }
+
+    /* ── Task card ── */
+    .task-card {
+      background: #fff;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      padding: 12px;
+      cursor: grab;
+      transition: box-shadow 0.15s, border-color 0.15s;
+    }
+    .task-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,.08); }
+    .task-card.sortable-ghost { opacity: 0.4; }
+    .task-card.sortable-drag  { cursor: grabbing; box-shadow: 0 4px 16px rgba(0,0,0,.14); }
+
+    .task-card-top {
+      display: flex;
+      align-items: flex-start;
+      gap: 6px;
+      margin-bottom: 6px;
+      flex-wrap: wrap;
+    }
+
+    .task-title-input {
+      flex: 1;
+      font-size: 13px;
+      font-weight: 600;
+      color: #111827;
+      border: none;
+      background: transparent;
+      outline: none;
+      padding: 0;
+      min-width: 0;
+      line-height: 1.4;
+      cursor: text;
+    }
+    .task-title-input:focus {
+      background: #f9fafb;
+      border-radius: 4px;
+      padding: 2px 4px;
+    }
+
+    .task-badge {
+      display: inline-block;
+      font-size: 10px;
+      font-weight: 600;
+      border-radius: 4px;
+      padding: 2px 6px;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .badge-google  { background: #e8f0fe; color: #1a73e8; }
+    .badge-asana   { background: #fce8f3; color: #f06a99; }
+    .badge-both    { background: #e6f4ea; color: #1e8e3e; }
+
+    .confidence-high   { background: #e6f4ea; color: #1e8e3e; }
+    .confidence-medium { background: #fef9c3; color: #a16207; }
+    .confidence-low    { background: #fee2e2; color: #dc2626; }
+
+    .task-meta {
+      font-size: 12px;
+      color: #6b7280;
+      margin-bottom: 8px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      align-items: center;
+    }
+
+    .task-meta a { color: #1a73e8; text-decoration: none; }
+    .task-meta a:hover { text-decoration: underline; }
+
+    .due-date { font-size: 12px; color: #6b7280; }
+    .due-date.overdue { color: #dc2626; font-weight: 600; }
+
+    .task-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: 8px;
+    }
+
+    .assignee-label {
+      font-size: 11px;
+      color: #9ca3af;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 130px;
+    }
+
+    .task-actions {
+      display: flex;
+      gap: 4px;
+    }
+
+    .btn-icon {
+      background: none;
+      border: 1px solid transparent;
+      border-radius: 4px;
+      padding: 3px 6px;
+      font-size: 12px;
+      cursor: pointer;
+      color: #6b7280;
+      transition: background 0.12s, color 0.12s;
+      white-space: nowrap;
+    }
+    .btn-icon:hover {
+      background: #f3f4f6;
+      border-color: #d1d5db;
+      color: #111827;
+    }
+    .btn-icon.save-title { color: #1a73e8; }
+
+    /* Reassign dropdown */
+    .reassign-select {
+      font-size: 12px;
+      border: 1px solid #d1d5db;
+      border-radius: 4px;
+      padding: 2px 4px;
+    }
+
+    /* ── Sync bar ── */
+    #sync-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: #f9fafb;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      padding: 8px 14px;
+      margin-bottom: 14px;
+      font-size: 12px;
+      color: #6b7280;
+      gap: 12px;
+    }
+    #sync-bar .sync-left { display: flex; align-items: center; gap: 10px; }
+    #sync-bar .sync-error-badge {
+      background: #fef3c7;
+      color: #92400e;
+      border-radius: 4px;
+      padding: 2px 7px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    #sync-now-btn {
+      font-size: 12px;
+      padding: 4px 10px;
+      white-space: nowrap;
+    }
+    #sync-now-btn:disabled { opacity: 0.6; }
+
+    /* ── Sync status dot on task cards ── */
+    .task-card { position: relative; }
+    .sync-dot {
+      position: absolute;
+      bottom: 8px;
+      right: 8px;
+      font-size: 11px;
+      cursor: default;
+      line-height: 1;
+    }
+
+    /* ── external_deleted card style ── */
+    .task-card.sync-deleted {
+      opacity: 0.55;
+      border-left: 3px solid #ef4444;
+    }
+    .task-card.sync-deleted .task-title-input {
+      text-decoration: line-through;
+      color: #9ca3af;
+    }
+    .recreate-btn {
+      font-size: 11px;
+      color: #1a73e8;
+      cursor: pointer;
+      background: none;
+      border: 1px solid #1a73e8;
+      border-radius: 4px;
+      padding: 2px 6px;
+    }
+
+    @media (max-width: 700px) {
+      .kanban-board { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+  <header class="site-header">
+    <div class="container">
+      <a href="/dashboard" class="brand">TaskBot</a>
+      <nav class="site-nav">
+        <a href="/dashboard">Dashboard</a>
+        <a href="/tasks" class="active">Tasks</a>
+        <a href="/settings">Settings</a>
+        <a href="/admin" id="admin-link" hidden>Admin</a>
+      </nav>
+      <span class="user-chip" id="user-chip"></span>
+      <button id="logout-btn" class="btn btn-ghost" style="margin-left:8px;font-size:13px;padding:5px 10px;">Sign out</button>
+    </div>
+  </header>
+
+  <main style="padding-top:24px;">
+    <div class="container" style="max-width:1100px;">
+
+      <div class="page-header" style="margin-bottom:20px;">
+        <h1 class="page-title">Tasks</h1>
+      </div>
+
+      <!-- Loading -->
+      <div id="loading" class="empty-state">
+        <span class="loading-spinner"></span>Loading…
+      </div>
+
+      <!-- Board -->
+      <div id="board-wrap" hidden>
+
+        <!-- Draft save bar (shown when there are unsaved moves) -->
+        <div id="draft-bar" hidden>
+          <span id="draft-label"></span>
+          <div style="display:flex;gap:8px;">
+            <button id="discard-btn" class="btn btn-ghost">Discard</button>
+            <button id="save-btn" class="btn btn-primary">Save changes</button>
+          </div>
+        </div>
+
+        <!-- Sync bar -->
+        <div id="sync-bar">
+          <div class="sync-left">
+            <span id="sync-last-label">Not synced yet</span>
+            <span id="sync-error-badge" class="sync-error-badge" hidden></span>
+          </div>
+          <button id="sync-now-btn" class="btn btn-ghost">Sync Now</button>
+        </div>
+
+        <!-- Toolbar -->
+        <div class="kanban-toolbar">
+          <input type="search" id="search-input" placeholder="Search tasks…" />
+          <select id="filter-meeting">
+            <option value="">All meetings</option>
+          </select>
+          <select id="filter-dest">
+            <option value="">All destinations</option>
+            <option value="google_tasks">Google Tasks</option>
+            <option value="asana">Asana</option>
+          </select>
+          <select id="sort-by">
+            <option value="created">Sort: Date created</option>
+            <option value="due">Sort: Due date</option>
+          </select>
+        </div>
+
+        <!-- Kanban -->
+        <div class="kanban-board">
+          <div class="kanban-col">
+            <div class="kanban-col-header">
+              Pending <span class="kanban-count" id="count-pending">0</span>
+            </div>
+            <div class="kanban-list" id="col-pending" data-status="created"></div>
+          </div>
+
+          <div class="kanban-col">
+            <div class="kanban-col-header">
+              In Progress <span class="kanban-count" id="count-inprogress">0</span>
+            </div>
+            <div class="kanban-list" id="col-inprogress" data-status="in_progress"></div>
+          </div>
+
+          <div class="kanban-col">
+            <div class="kanban-col-header">
+              Done <span class="kanban-count" id="count-done">0</span>
+            </div>
+            <div class="kanban-list" id="col-done" data-status="completed"></div>
+          </div>
+        </div>
+
+        <div id="empty-tasks" class="empty-state" hidden style="margin-top:32px;">
+          No tasks yet. Tasks appear here after you approve proposals on the Dashboard.
+        </div>
+      </div>
+
+    </div>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
+  <script type="module" src="js/tasks.js"></script>
+</body>
+</html>

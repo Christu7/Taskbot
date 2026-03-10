@@ -13,7 +13,7 @@ import {
 
 const firebaseConfig = {
   apiKey: "AIzaSyD-oZFSZo_9cHm9FegF8e_-cQJGtuLv6UM",
-  authDomain: "taskbot-fb10d.firebaseapp.com",
+  authDomain: "taskbot-fb10d.web.app",
   projectId: "taskbot-fb10d",
   storageBucket: "taskbot-fb10d.firebasestorage.app",
   messagingSenderId: "997717209533",

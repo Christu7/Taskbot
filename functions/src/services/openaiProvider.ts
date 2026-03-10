@@ -4,6 +4,7 @@ import { ExtractedTask, MeetingContext } from "../models/aiExtraction";
 import { buildExtractionPrompt } from "../prompts/taskExtraction";
 import { AIProvider } from "./aiProvider";
 import { AIExtractionError } from "../utils/errors";
+import { getSecret } from "./secrets";
 
 /** Default OpenAI model. Override with OPENAI_MODEL env var. */
 const DEFAULT_OPENAI_MODEL = "gpt-4o-mini";
@@ -15,22 +16,24 @@ const DEFAULT_OPENAI_MODEL = "gpt-4o-mini";
  * contains malformed JSON, a follow-up message is sent asking for clean JSON.
  */
 export class OpenAIProvider implements AIProvider {
-  private client: OpenAI;
+  private apiKeyOverride?: string;
+  private client: OpenAI | null = null;
   private model: string;
 
   constructor(apiKeyOverride?: string) {
-    const apiKey = apiKeyOverride ?? process.env.OPENAI_API_KEY;
-    if (!apiKey) {
-      throw new Error(
-        "OPENAI_API_KEY is not set. " +
-        "Add it to functions/.env (local) or Firebase Secret Manager (production)."
-      );
-    }
-    this.client = new OpenAI({ apiKey });
+    this.apiKeyOverride = apiKeyOverride;
     this.model = process.env.OPENAI_MODEL ?? DEFAULT_OPENAI_MODEL;
   }
 
+  private async getClient(): Promise<OpenAI> {
+    if (this.client) return this.client;
+    const apiKey = this.apiKeyOverride ?? await getSecret("ai.apiKey");
+    this.client = new OpenAI({ apiKey });
+    return this.client;
+  }
+
   async extractTasks(transcript: string, context: MeetingContext): Promise<ExtractedTask[]> {
+    const client = await this.getClient();
     const { system, user } = buildExtractionPrompt(transcript, context);
 
     const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
@@ -39,7 +42,7 @@ export class OpenAIProvider implements AIProvider {
     ];
 
     // ── First attempt ──────────────────────────────────────────────────────
-    const firstResponse = await this.client.chat.completions.create({
+    const firstResponse = await client.chat.completions.create({
       model: this.model,
       max_tokens: 4096,
       messages,
@@ -57,7 +60,7 @@ export class OpenAIProvider implements AIProvider {
     }
 
     // ── Retry: send the bad response back and ask for clean JSON ──────────
-    const retryResponse = await this.client.chat.completions.create({
+    const retryResponse = await client.chat.completions.create({
       model: this.model,
       max_tokens: 4096,
       messages: [

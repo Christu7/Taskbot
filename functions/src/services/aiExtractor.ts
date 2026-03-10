@@ -59,6 +59,9 @@ function validateAndNormalise(raw: unknown, index: number): ExtractedTask {
     isSensitive,
     suggestedDueDate,
     rawAssigneeText: t.rawAssigneeText as string,
+    sharedWith: Array.isArray(t.sharedWith)
+      ? (t.sharedWith as unknown[]).filter((e): e is string => typeof e === "string")
+      : [],
   };
 }
 
@@ -95,7 +98,7 @@ export async function extractTasksFromTranscript(
     transcriptLength: transcript.length,
   });
 
-  const provider = uid ? await getAIProviderForUser(uid) : getAIProvider();
+  const provider = uid ? await getAIProviderForUser(uid) : await getAIProvider();
   const rawTasks = await provider.extractTasks(transcript, context);
 
   logger.info(`aiExtractor: model returned ${rawTasks.length} raw task(s)`);

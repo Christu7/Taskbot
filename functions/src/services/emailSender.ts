@@ -155,6 +155,8 @@ function buildEmailHtml(
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
+const SETTINGS_URL = `${process.env.APP_URL ?? "https://taskbot-fb10d.web.app"}/settings`;
+
 /**
  * Sends a proposal notification email via the Gmail API using the
  * meeting organizer's stored OAuth tokens.
@@ -209,4 +211,46 @@ export async function sendProposalNotification(
     `emailSender: sent via Gmail API from ${senderEmail} to ${recipientEmail} — ` +
     `${count} proposal(s) from "${meetingTitle}"`
   );
+}
+
+/**
+ * Sends a brief warning email when a task was routed to Google Tasks instead
+ * of Asana because the user's Asana account is not connected or has expired.
+ */
+export async function sendAsanaWarningEmail(
+  senderAccessToken: string,
+  senderEmail: string,
+  recipientEmail: string,
+  recipientName: string
+): Promise<void> {
+  const subject = "TaskBot: Asana not connected — task sent to Google Tasks";
+
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:24px;font-family:Arial,Helvetica,sans-serif;color:#333333;">
+  <h2 style="color:#e67e22;margin:0 0 16px;">Asana not connected</h2>
+  <p style="margin:0 0 12px;">Hi <strong>${esc(recipientName)}</strong>,</p>
+  <p style="margin:0 0 12px;line-height:1.5;">
+    Your task destination includes Asana, but your Asana account is not connected
+    or your access has expired. The task was created in <strong>Google Tasks</strong> instead.
+  </p>
+  <p style="margin:0 0 24px;line-height:1.5;">
+    To reconnect Asana, visit your
+    <a href="${SETTINGS_URL}" style="color:#1a73e8;">TaskBot settings</a>.
+  </p>
+  <hr style="border:none;border-top:1px solid #e8e8e8;margin:0 0 16px;">
+  <p style="font-size:12px;color:#888888;margin:0;">
+    You received this because your task destination preference includes Asana.
+  </p>
+</body>
+</html>`;
+
+  const gmail = buildGmailClient(senderAccessToken);
+  await gmail.users.messages.send({
+    userId: "me",
+    requestBody: { raw: encodeRawMessage(senderEmail, recipientEmail, subject, html) },
+  });
+
+  logger.info(`emailSender: sent Asana warning to ${recipientEmail}`);
 }

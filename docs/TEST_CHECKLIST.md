@@ -237,6 +237,91 @@ Each item references the relevant component so you know where to look if it fail
 
 ---
 
+---
+
+## 13. Asana Integration
+
+- [ ] Connect Asana account via Settings → OAuth flow completes, "✓ Connected" shown
+- [ ] Select workspace and project in Settings → selections persist across refresh
+- [ ] Set task destination to **Asana** → approved task appears in the correct Asana project
+- [ ] Set task destination to **Both** → task appears in Google Tasks AND Asana project
+- [ ] Asana task has correct title, description, Drive source link, and due date
+- [ ] Disconnect Asana → next approved task routes to Google Tasks; warning email sent to user
+- [ ] Reconnect Asana after disconnect → tasks route to Asana again
+
+---
+
+## 14. Slack Integration
+
+- [ ] Connect Slack via Settings (enter Slack email) → `slackUserId` saved, "✓ Connected" shown
+- [ ] Set notification channel to **Slack** → DM received with task proposal cards
+- [ ] Approve task via Slack button → task created in external system; button replaced with "✓ Approved"
+- [ ] Reject task via Slack button → task marked rejected; button replaced with "✗ Rejected"
+- [ ] **View Details** button → ephemeral message shows full description and transcript excerpt
+- [ ] Slack message updates in-place after approve/reject (no duplicated messages)
+- [ ] Set notification channel to **Both** → receive email AND Slack DM for the same meeting
+- [ ] Disconnect Slack → next notification falls back to email; no error thrown
+- [ ] Connect Slack with unrecognised email → helpful error displayed in Settings
+- [ ] Slack not configured (no `SLACK_BOT_TOKEN`) → notifyUsers falls back to email for all users
+- [ ] Slack selected but not connected → inline warning AND page-load toast on Settings
+
+---
+
+## 15. Multi-User Meetings
+
+- [ ] Meeting with 2+ TaskBot attendees → each user gets their own independent proposals
+- [ ] Proposals sorted by confidence (high → medium → low) on the review page
+- [ ] Review page shows own proposals with action buttons (approve / reject / reassign)
+- [ ] "Other tasks from this meeting" collapsible section visible for attendees
+- [ ] Other-tasks section groups read-only cards by assignee — no approve/reject buttons
+- [ ] **Reassign** button opens inline dropdown of active TaskBot users
+- [ ] Reassign to another user → proposal disappears from original assignee's list
+- [ ] New assignee receives a notification for the reassigned task
+- [ ] New assignee's review card shows "Reassigned from [Name]"
+- [ ] Attempt to reassign to yourself → clear error message
+- [ ] Attempt to reassign an already-approved or rejected proposal → 409 error
+
+---
+
+## 16. Kanban Dashboard (Tasks Board)
+
+- [ ] Tasks board shows all created / in-progress / completed tasks in correct columns
+- [ ] Drag task to "Done" column → status updated in Firestore and marked complete in external system
+- [ ] Drag task from "Done" to "In Progress" → task reopened in external system
+- [ ] Edit task title inline on the board → change queued for sync (`syncStatus: pending_sync`)
+- [ ] Edited title synced to external system on next cycle or "Sync Now"
+- [ ] Search bar filters task cards by title in real time
+- [ ] Board updates without a page refresh when Firestore status changes (real-time listener)
+
+---
+
+## 17. Two-Way Sync
+
+- [ ] Complete a task in Google Tasks → moves to "Done" on the dashboard within 10 minutes
+- [ ] Complete a task in Asana → moves to "Done" on the dashboard within 10 minutes
+- [ ] Edit task title in Asana → updated title appears on the dashboard after next sync
+- [ ] Delete a task in Google Tasks → card shows greyed-out **Recreate** option
+- [ ] Delete a task in Asana → card shows greyed-out **Recreate** option
+- [ ] Click **Recreate** → task re-created in external system; Recreate button hidden
+- [ ] **Sync Now** button triggers immediate sync and shows result counts (synced / errors / deleted)
+- [ ] `syncStatus` badge on task cards reflects current state (synced / sync_error / pending_sync)
+- [ ] Edit a task on the dashboard → sync cycle does NOT overwrite that edit before it is pushed externally (`pending_sync` guard)
+- [ ] Expired OAuth tokens → `hasValidTokens = false`, reconnect banner shown on dashboard; sync skips user gracefully
+
+---
+
+## 18. Organisation Defaults (Admin)
+
+- [ ] Non-admin user does not see the "Organisation Defaults" section in Settings
+- [ ] Admin user (`isAdmin: true` in Firestore) sees and can edit the section
+- [ ] Admin sets default notification channel → users without a personal preference inherit it
+- [ ] Admin sets default task destination → users without a personal preference inherit it
+- [ ] `GET /api/config/org-defaults` returns 403 for non-admin authenticated users
+- [ ] `PATCH /api/config/org-defaults` returns 403 for non-admin authenticated users
+- [ ] Unauthenticated request to either org-defaults endpoint → 401
+
+---
+
 ## Notes
 
 - If a step fails, check function logs first: Emulator UI → Logs tab → filter by function name

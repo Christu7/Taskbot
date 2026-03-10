@@ -12,10 +12,21 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == userId;
     }
 
+    function isAdmin() {
+      return isSignedIn()
+          && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "admin";
+    }
+
     // ── Users ────────────────────────────────────────────────────────────────
     // User profile documents — readable/writable only by that user.
+    // The `role` field is immutable from the client: users cannot promote
+    // themselves.  Admins change roles exclusively via Cloud Functions
+    // (Admin SDK), which bypasses these rules.
     match /users/{userId} {
-      allow read, write: if isOwner(userId);
+      allow read: if isOwner(userId);
+      allow write: if isOwner(userId)
+                   && (!("role" in request.resource.data)
+                       || request.resource.data.role == resource.data.role);
 
       // Tokens subcollection — stores OAuth access/refresh tokens.
       // Managed exclusively by Cloud Functions (Admin SDK).
@@ -44,20 +55,48 @@ service cloud.firestore {
 
     // ── Proposals ────────────────────────────────────────────────────────────
     // Task proposals extracted from meeting transcripts.
-    // Each assignee can only read and update their own proposals.
+    //
+    // READ: the assignee can always read their own proposals. Any user whose
+    //       email appears in processedTranscripts/{meetingId}.attendeeEmails
+    //       can also read all proposals for that meeting (read-only view).
+    // UPDATE: only the current assignee (including after reassignment) can write.
     // Cloud Functions (Admin SDK) handle creation.
     match /proposals/{meetingId}/tasks/{taskId} {
-      allow read, update: if isSignedIn()
-                          && resource.data.assigneeUid == request.auth.uid;
+      allow read: if isSignedIn() && (
+        resource.data.assigneeUid == request.auth.uid ||
+        (request.auth.token.email != null &&
+         request.auth.token.email in
+           get(/databases/$(database)/documents/processedTranscripts/$(meetingId)).data.attendeeEmails)
+      );
+      allow update: if isSignedIn()
+                    && resource.data.assigneeUid == request.auth.uid;
     }
 
     // ── Proposal collection group query support ───────────────────────────────
     // The approval dashboard uses a collectionGroup("tasks") query filtered by
     // assigneeUid. Firestore requires a recursive-wildcard rule to authorise
     // collection group queries — path-specific rules alone are not sufficient.
+    // This covers the dashboard and Kanban board (own tasks only).
     match /{path=**}/tasks/{taskId} {
       allow read, update: if isSignedIn()
                           && resource.data.assigneeUid == request.auth.uid;
+    }
+
+    // ── Config (org defaults) ────────────────────────────────────────────────
+    // Organisation-wide defaults stored at config/orgDefaults.
+    // Any signed-in user can read (so the settings page can show effective defaults).
+    // Only admins (users/{uid}.role == "admin") may write.
+    match /config/orgDefaults {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // ── Config (secrets) ─────────────────────────────────────────────────────
+    // KMS-encrypted credentials stored at config/secrets.
+    // Only admins may read or write — primary security boundary is the API
+    // layer (requireAdmin middleware), but Firestore rules are the backstop.
+    match /config/secrets {
+      allow read, write: if isAdmin();
     }
 
     // ── Approval Tokens ───────────────────────────────────────────────────────

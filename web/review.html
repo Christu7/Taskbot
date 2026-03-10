@@ -14,6 +14,7 @@
       <nav class="site-nav">
         <a href="/dashboard">Dashboard</a>
         <a href="/settings">Settings</a>
+        <a href="/admin" id="admin-link" hidden>Admin</a>
       </nav>
       <span class="user-chip" id="user-chip"></span>
       <button id="logout-btn" class="btn btn-ghost" style="margin-left:8px;font-size:13px;padding:5px 10px;" hidden>Sign out</button>
@@ -50,6 +51,16 @@
         </div>
 
         <div id="proposals-list"></div>
+
+        <div id="other-tasks-section" hidden>
+          <details id="other-tasks-details">
+            <summary class="other-tasks-summary">
+              Other tasks from this meeting
+              <span id="other-tasks-count" class="other-tasks-count"></span>
+            </summary>
+            <div id="other-tasks-list"></div>
+          </details>
+        </div>
 
         <div id="empty-state" class="empty-state" hidden>
           No proposals found for this meeting.

@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TaskBot — Admin</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+  <header class="site-header">
+    <div class="container">
+      <a href="/dashboard" class="brand">TaskBot</a>
+      <nav class="site-nav">
+        <a href="/dashboard">Dashboard</a>
+        <a href="/tasks">Tasks</a>
+        <a href="/settings">Settings</a>
+        <a href="/admin" class="active" id="admin-link">Admin</a>
+      </nav>
+      <span class="user-chip" id="user-chip"></span>
+      <button id="logout-btn" class="btn btn-ghost" style="margin-left:8px;font-size:13px;padding:5px 10px;">Sign out</button>
+    </div>
+  </header>
+
+  <main>
+    <div class="container">
+
+      <div class="page-header">
+        <h1 class="page-title">Admin Panel</h1>
+      </div>
+
+      <div id="loading" class="empty-state">
+        <span class="loading-spinner"></span>Loading…
+      </div>
+
+      <div id="content" hidden>
+
+        <!-- ── Admin sub-navigation ─────────────────────────────────────── -->
+        <div class="admin-tabs">
+          <button class="admin-tab active" data-tab="settings">Settings</button>
+          <button class="admin-tab" data-tab="users">Users</button>
+          <button class="admin-tab" data-tab="dashboard">Dashboard</button>
+          <button class="admin-tab" data-tab="meetings">Meetings</button>
+        </div>
+
+        <!-- ══ Tab: Settings ═══════════════════════════════════════════════ -->
+        <div id="tab-settings" class="tab-pane">
+
+          <!-- ── Integrations & Credentials ──────────────────────────────── -->
+          <section class="settings-section" id="credentials-section">
+            <h2 class="settings-section-title">Integrations &amp; Credentials</h2>
+            <p style="font-size:13px;color:#666;margin:0 0 4px;">Org-wide API keys and credentials. These apply to all users.</p>
+            <p class="creds-meta" id="creds-last-saved"></p>
+
+            <!-- ── AI Provider ───────────────────────────────────────────── -->
+            <div class="setting-row" style="border-top:1px solid #f3f4f6;margin-top:8px;padding-top:16px;">
+              <div>
+                <div class="setting-label">AI Provider</div>
+                <div class="setting-desc">Which AI model processes transcripts.</div>
+              </div>
+              <select id="cred-ai-provider">
+                <option value="anthropic">Anthropic (Claude)</option>
+                <option value="openai">OpenAI (GPT)</option>
+              </select>
+            </div>
+            <div class="setting-row" style="border-top:none;padding-top:0;">
+              <div>
+                <div class="setting-label" style="font-size:13px;">API Key</div>
+                <div class="setting-desc" id="masked-ai-key">Checking…</div>
+              </div>
+              <div class="input-reveal">
+                <input type="password" id="cred-ai-key" placeholder="sk-ant-… or sk-…" style="font-size:13px;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;min-width:240px;" />
+                <button class="reveal-btn" data-target="cred-ai-key">Show</button>
+                <button id="save-ai-btn" class="btn btn-primary">Save AI</button>
+              </div>
+            </div>
+            <div class="setting-row" style="border-top:none;padding-top:0;">
+              <div></div>
+              <div>
+                <button id="test-ai-btn" class="btn btn-ghost" style="font-size:13px;">Test Connection</button>
+                <div id="test-ai-result" class="test-result-inline" hidden></div>
+              </div>
+            </div>
+
+            <!-- ── Slack ─────────────────────────────────────────────────── -->
+            <div class="setting-row" style="border-top:1px solid #f3f4f6;margin-top:8px;padding-top:16px;">
+              <div>
+                <div class="setting-label">Slack Bot Token</div>
+                <div class="setting-desc" id="masked-slack-token">Checking…</div>
+              </div>
+              <div class="input-reveal">
+                <input type="password" id="cred-slack-token" placeholder="xoxb-…" style="font-size:13px;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;min-width:240px;" />
+                <button class="reveal-btn" data-target="cred-slack-token">Show</button>
+              </div>
+            </div>
+            <div class="setting-row" style="border-top:none;padding-top:0;">
+              <div>
+                <div class="setting-label" style="font-size:13px;">Signing Secret</div>
+                <div class="setting-desc" id="masked-slack-secret">Checking…</div>
+              </div>
+              <div class="input-reveal">
+                <input type="password" id="cred-slack-secret" placeholder="Slack signing secret" style="font-size:13px;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;min-width:240px;" />
+                <button class="reveal-btn" data-target="cred-slack-secret">Show</button>
+              </div>
+            </div>
+            <div class="setting-row" style="border-top:none;padding-top:0;">
+              <div>
+                <div class="setting-label" style="font-size:13px;">Client ID</div>
+                <div class="setting-desc" id="masked-slack-client-id">Checking…</div>
+              </div>
+              <input type="text" id="cred-slack-client-id" placeholder="Slack app client ID" style="font-size:13px;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;min-width:240px;" />
+            </div>
+            <div class="setting-row" style="border-top:none;padding-top:0;">
+              <div>
+                <div class="setting-label" style="font-size:13px;">Client Secret</div>
+                <div class="setting-desc" id="masked-slack-client-secret">Checking…</div>
+              </div>
+              <div class="input-reveal">
+                <input type="password" id="cred-slack-client-secret" placeholder="Slack app client secret" style="font-size:13px;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;min-width:240px;" />
+                <button class="reveal-btn" data-target="cred-slack-client-secret">Show</button>
+                <button id="save-slack-btn" class="btn btn-primary">Save Slack</button>
+              </div>
+            </div>
+            <div class="setting-row" style="border-top:none;padding-top:0;">
+              <div>
+                <div class="setting-desc" style="font-size:12px;">
+                  Need help? See the <a href="/docs/SLACK_SETUP.md" target="_blank" style="color:#2563eb;">Slack setup guide</a>.
+                </div>
+              </div>
+              <div>
+                <button id="test-slack-btn" class="btn btn-ghost" style="font-size:13px;">Test Connection</button>
+                <div id="test-slack-result" class="test-result-inline" hidden></div>
+              </div>
+            </div>
+
+            <!-- ── Asana ──────────────────────────────────────────────────── -->
+            <div class="setting-row" style="border-top:1px solid #f3f4f6;margin-top:8px;padding-top:16px;">
+              <div>
+                <div class="setting-label">Asana Client ID</div>
+                <div class="setting-desc" id="masked-asana-id">Checking…</div>
+              </div>
+              <input type="text" id="cred-asana-id" placeholder="Asana client ID" style="font-size:13px;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;min-width:240px;" />
+            </div>
+            <div class="setting-row" style="border-top:none;padding-top:0;">
+              <div>
+                <div class="setting-label" style="font-size:13px;">Client Secret</div>
+                <div class="setting-desc" id="masked-asana-secret">Checking…</div>
+              </div>
+              <div class="input-reveal">
+                <input type="password" id="cred-asana-secret" placeholder="Asana client secret" style="font-size:13px;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;min-width:240px;" />
+                <button class="reveal-btn" data-target="cred-asana-secret">Show</button>
+                <button id="save-asana-cred-btn" class="btn btn-primary">Save Asana</button>
+              </div>
+            </div>
+            <div class="setting-row" style="border-top:none;padding-top:0;">
+              <div>
+                <div class="setting-desc" style="font-size:12px;">
+                  Create or manage your app at the <a href="https://app.asana.com/0/developer-console" target="_blank" style="color:#2563eb;">Asana Developer Console</a>.
+                </div>
+              </div>
+              <div>
+                <button id="test-asana-btn" class="btn btn-ghost" style="font-size:13px;">Test Connection</button>
+                <div id="test-asana-result" class="test-result-inline" hidden></div>
+              </div>
+            </div>
+
+            <!-- ── Google OAuth (read-only) ───────────────────────────────── -->
+            <div class="setting-row" style="border-top:1px solid #f3f4f6;margin-top:8px;padding-top:16px;">
+              <div>
+                <div class="setting-label">Google OAuth</div>
+                <div class="setting-desc">Configured during deployment.</div>
+              </div>
+              <div style="font-size:13px;color:#6b7280;font-style:italic;">
+                Set via environment variables — no UI edit required.
+              </div>
+            </div>
+
+            <!-- ── Test All ───────────────────────────────────────────────── -->
+            <div class="setting-row" style="border-top:1px solid #f3f4f6;margin-top:8px;">
+              <div>
+                <div class="setting-label">Test All Connections</div>
+                <div class="setting-desc">Verify every integration is reachable.</div>
+              </div>
+              <button id="test-creds-btn" class="btn btn-ghost">Test All</button>
+            </div>
+            <div id="test-results" hidden style="padding:0 20px 16px;font-size:13px;line-height:1.7;"></div>
+
+          </section>
+
+          <!-- ── Organisation Defaults ──────────────────────────────────── -->
+          <section class="settings-section">
+            <h2 class="settings-section-title">Organisation Defaults</h2>
+            <p style="font-size:13px;color:#666;margin:0 0 16px;">
+              These defaults apply to users who haven't set their own preference.
+            </p>
+
+            <div class="setting-row">
+              <div>
+                <div class="setting-label">Default Notification Channel</div>
+                <div class="setting-desc">Used when a user hasn't chosen a channel preference.</div>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:6px;">
+                <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
+                  <input type="checkbox" name="org-notify-via" value="email"> Email
+                </label>
+                <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
+                  <input type="checkbox" name="org-notify-via" value="slack"> Slack
+                </label>
+              </div>
+            </div>
+
+            <div class="setting-row">
+              <div>
+                <div class="setting-label">Default Task Destination</div>
+                <div class="setting-desc">Used when a user hasn't chosen a task destination.</div>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:6px;">
+                <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
+                  <input type="checkbox" name="org-task-dest" value="google_tasks"> Google Tasks
+                </label>
+                <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
+                  <input type="checkbox" name="org-task-dest" value="asana"> Asana
+                </label>
+              </div>
+            </div>
+
+            <div class="setting-row">
+              <div>
+                <div class="setting-label">Default Proposal Expiry</div>
+                <div class="setting-desc">How long unreviewed proposals stay open.</div>
+              </div>
+              <select id="org-expiry-hours">
+                <option value="24">24 hours</option>
+                <option value="48">48 hours</option>
+                <option value="72">72 hours</option>
+              </select>
+            </div>
+
+            <div class="setting-row">
+              <div>
+                <div class="setting-label">Default Auto-Approve</div>
+                <div class="setting-desc">Automatically approve extracted tasks without review.</div>
+              </div>
+              <label class="toggle">
+                <input type="checkbox" id="org-auto-approve">
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+
+            <div class="setting-row" style="border-top:1px solid #f3f4f6;">
+              <div></div>
+              <button id="save-org-defaults-btn" class="btn btn-primary">Save Org Defaults</button>
+            </div>
+          </section>
+
+        </div><!-- /tab-settings -->
+
+        <!-- ══ Tab: Users ══════════════════════════════════════════════════ -->
+        <div id="tab-users" class="tab-pane" hidden>
+          <section class="settings-section">
+            <h2 class="settings-section-title">User Management</h2>
+            <div id="users-list"><!-- Populated by admin.js --></div>
+          </section>
+        </div>
+
+        <!-- ══ Tab: Dashboard ══════════════════════════════════════════════ -->
+        <div id="tab-dashboard" class="tab-pane" hidden>
+          <section class="settings-section">
+            <h2 class="settings-section-title">Usage Dashboard</h2>
+            <p style="font-size:13px;color:#6b7280;">Usage metrics and activity — coming in a later prompt.</p>
+          </section>
+        </div>
+
+        <!-- ══ Tab: Meetings ═══════════════════════════════════════════════ -->
+        <div id="tab-meetings" class="tab-pane" hidden>
+          <section class="settings-section">
+            <h2 class="settings-section-title">Meetings</h2>
+            <p style="font-size:13px;color:#6b7280;">Processed meeting transcripts view — coming in a later prompt.</p>
+          </section>
+        </div>
+
+      </div><!-- /content -->
+
+    </div>
+  </main>
+
+  <script type="module" src="js/admin.js"></script>
+</body>
+</html>

@@ -7,7 +7,7 @@ import { ProposalDocument } from "../models/proposal";
 import { MeetingContext, ExtractedTask } from "../models/aiExtraction";
 import { UserDocument } from "../models/user";
 import { getValidAccessToken } from "../auth";
-import { getTranscriptContent } from "../services/drive";
+import { getTranscriptContent, TranscriptContent } from "../services/drive";
 import { getUserByEmail } from "../services/firestore";
 import { extractTasksFromTranscript } from "../services/aiExtractor";
 import { AIExtractionError, TranscriptNotFoundError } from "../utils/errors";
@@ -93,9 +93,9 @@ export const processTranscript = onDocumentCreated(
         );
       }
 
-      let transcriptText: string;
+      let transcriptContent: TranscriptContent;
       try {
-        transcriptText = await getTranscriptContent(accessToken, transcriptDoc.driveFileId);
+        transcriptContent = await getTranscriptContent(accessToken, transcriptDoc.driveFileId);
       } catch (err) {
         if (err instanceof TranscriptNotFoundError) {
           throw new Error(
@@ -105,9 +105,14 @@ export const processTranscript = onDocumentCreated(
         throw err;
       }
 
-      if (!transcriptText.trim()) {
+      if (!transcriptContent.transcript.trim()) {
         throw new Error("Transcript file is empty or could not be read.");
       }
+
+      logger.info(
+        `processTranscript: detected format "${transcriptContent.format}" for ${meetingId}` +
+        (transcriptContent.notes ? " (Gemini Notes tab found)" : "")
+      );
 
       // ── Step 2: Build MeetingContext from stored attendee data ─────────
       await docRef.update({ status: "extracting" });
@@ -132,19 +137,23 @@ export const processTranscript = onDocumentCreated(
         meetingTitle: transcriptDoc.meetingTitle,
         attendeeNames,
         meetingDate,
+        // Pass Gemini Notes to the AI when present — the extraction prompt uses
+        // them as supplementary context while keeping the transcript authoritative.
+        ...(transcriptContent.notes ? { geminiNotes: transcriptContent.notes } : {}),
       };
 
       // ── Step 3: Run AI extraction ──────────────────────────────────────
       logger.info(
         `processTranscript: running AI extraction for "${transcriptDoc.meetingTitle}" ` +
-        `(${attendeeNames.length} known attendee(s), ${transcriptText.length} chars)`
+        `(${attendeeNames.length} known attendee(s), ${transcriptContent.transcript.length} chars, ` +
+        `format: ${transcriptContent.format})`
       );
 
       // ── AI extraction with one automatic retry after 30 s ──────────────
       let extractedTasks: ExtractedTask[];
       try {
         extractedTasks = await extractTasksFromTranscript(
-          transcriptText, context, transcriptDoc.detectedByUid
+          transcriptContent.transcript, context, transcriptDoc.detectedByUid
         );
       } catch (firstErr) {
         if (firstErr instanceof AIExtractionError) {
@@ -155,7 +164,7 @@ export const processTranscript = onDocumentCreated(
           await sleep(AI_RETRY_DELAY_MS);
           // Let this throw to the outer catch if it fails again
           extractedTasks = await extractTasksFromTranscript(
-            transcriptText, context, transcriptDoc.detectedByUid
+            transcriptContent.transcript, context, transcriptDoc.detectedByUid
           );
         } else {
           throw firstErr;
@@ -239,6 +248,7 @@ export const processTranscript = onDocumentCreated(
           isSensitive: task.isSensitive,
           suggestedDueDate: task.suggestedDueDate,
           rawAssigneeText: task.rawAssigneeText,
+          sharedWith: task.sharedWith ?? [],
           // Proposal-specific
           meetingId,
           assigneeUid: assigneeUser.uid,
@@ -261,8 +271,8 @@ export const processTranscript = onDocumentCreated(
 
       await docRef.update({
         status: "proposed",
-        // Store count for observability — add field to doc even though it's not in the model
-        // (extra fields are allowed in Firestore)
+        transcriptFormat: transcriptContent.format,
+        hasNotes: !!transcriptContent.notes,
       } as Partial<ProcessedTranscriptDocument> & Record<string, unknown>);
 
       logger.info(
@@ -274,12 +284,17 @@ export const processTranscript = onDocumentCreated(
       const message = (err as Error).message ?? "Unknown error";
       logger.error(`processTranscript: pipeline failed for ${meetingId}`, { error: message });
 
-      // Mark as failed without throwing — throwing would cause the function to retry
+      // If the error is "Secret not found" (AI credentials not yet configured),
+      // use a specific status so the admin can see why the transcript is stuck.
+      const isUnconfigured = message.includes("Secret") && message.includes("not found");
+      const newStatus = isUnconfigured ? "awaiting_configuration" : "failed";
+
+      // Mark as failed/awaiting without throwing — throwing causes retries
       await docRef.update({
-        status: "failed",
-        error: message,
-        // FieldValue.serverTimestamp() for updatedAt is applied by Firestore rules implicitly;
-        // we use the Admin SDK here so we set it explicitly if needed
+        status: newStatus,
+        error: isUnconfigured
+          ? "AI provider not configured. An admin needs to set up AI credentials in Admin > Settings."
+          : message,
       } as unknown as Partial<ProcessedTranscriptDocument>);
     }
   }

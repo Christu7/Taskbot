@@ -5,6 +5,7 @@ import { ExtractedTask, MeetingContext } from "../models/aiExtraction";
 import { buildExtractionPrompt } from "../prompts/taskExtraction";
 import { OpenAIProvider } from "./openaiProvider";
 import { AIExtractionError } from "../utils/errors";
+import { getSecret } from "./secrets";
 
 // ─── Interface ────────────────────────────────────────────────────────────────
 
@@ -66,29 +67,37 @@ const DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-6";
  * Retry strategy: if the first response contains malformed JSON, the provider
  * sends a follow-up turn asking the model to return only the JSON array.
  * If the second attempt also fails, the error is re-thrown to the caller.
+ *
+ * The API client is initialised lazily on first extractTasks() call so that
+ * the (async) getSecret() call does not block module loading.
  */
 export class AnthropicProvider implements AIProvider {
-  private client: Anthropic;
+  /** Optional per-user API key override (from users/{uid}/apiKeys/anthropic.key). */
+  private apiKeyOverride?: string;
+  private client: Anthropic | null = null;
   private model: string;
 
   constructor(apiKeyOverride?: string) {
-    const apiKey = apiKeyOverride ?? process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) {
-      throw new Error(
-        "ANTHROPIC_API_KEY is not set. " +
-        "Add it to functions/.env (local) or Firebase Secret Manager (production)."
-      );
-    }
-    this.client = new Anthropic({ apiKey });
+    this.apiKeyOverride = apiKeyOverride;
     // ANTHROPIC_MODEL takes priority; fall back to legacy AI_MODEL, then the default
     this.model = process.env.ANTHROPIC_MODEL ?? process.env.AI_MODEL ?? DEFAULT_ANTHROPIC_MODEL;
   }
 
+  /** Returns (and caches) the initialised Anthropic client. */
+  private async getClient(): Promise<Anthropic> {
+    if (this.client) return this.client;
+    // Per-user key takes priority; fall back to org-level secret
+    const apiKey = this.apiKeyOverride ?? await getSecret("ai.apiKey");
+    this.client = new Anthropic({ apiKey });
+    return this.client;
+  }
+
   async extractTasks(transcript: string, context: MeetingContext): Promise<ExtractedTask[]> {
+    const client = await this.getClient();
     const { system, user } = buildExtractionPrompt(transcript, context);
 
     // ── First attempt ──────────────────────────────────────────────────────
-    const firstResponse = await this.client.messages.create({
+    const firstResponse = await client.messages.create({
       model: this.model,
       max_tokens: 4096,
       system,
@@ -107,7 +116,7 @@ export class AnthropicProvider implements AIProvider {
     }
 
     // ── Retry: send the bad response back and ask for clean JSON ──────────
-    const retryResponse = await this.client.messages.create({
+    const retryResponse = await client.messages.create({
       model: this.model,
       max_tokens: 4096,
       system,
@@ -145,19 +154,24 @@ export class AnthropicProvider implements AIProvider {
 
 /**
  * Returns the configured AI provider instance.
- * Reads the AI_PROVIDER environment variable (default: "anthropic").
  *
- * To add a new provider:
- *   1. Implement the AIProvider interface in a new file
- *   2. Add a case here
- *   3. Set AI_PROVIDER=<name> in functions/.env
+ * Provider selection order:
+ *   1. config/secrets.ai.provider (set via Admin > Settings)
+ *   2. AI_PROVIDER environment variable (fallback / fresh deployments)
+ *   3. Default: "anthropic"
  *
- * Model selection (set in functions/.env):
- *   Anthropic → ANTHROPIC_MODEL (e.g. claude-haiku-4-5-20251001, claude-sonnet-4-6, claude-opus-4-6)
- *   OpenAI    → OPENAI_MODEL    (e.g. gpt-4o-mini, gpt-4o, o1-mini)
+ * The provider's API key is resolved lazily inside extractTasks().
+ * Model selection (env vars, unchanged):
+ *   Anthropic → ANTHROPIC_MODEL (e.g. claude-haiku-4-5-20251001, claude-sonnet-4-6)
+ *   OpenAI    → OPENAI_MODEL    (e.g. gpt-4o-mini, gpt-4o)
  */
-export function getAIProvider(): AIProvider {
-  const provider = process.env.AI_PROVIDER ?? "anthropic";
+export async function getAIProvider(): Promise<AIProvider> {
+  let provider: string;
+  try {
+    provider = await getSecret("ai.provider");
+  } catch {
+    provider = process.env.AI_PROVIDER ?? "anthropic";
+  }
 
   switch (provider) {
     case "anthropic":
@@ -166,7 +180,7 @@ export function getAIProvider(): AIProvider {
       return new OpenAIProvider();
     default:
       throw new Error(
-        `Unknown AI_PROVIDER: "${provider}". Supported values: "anthropic", "openai"`
+        `Unknown AI provider: "${provider}". Supported values: "anthropic", "openai"`
       );
   }
 }
@@ -194,6 +208,7 @@ export async function getAIProviderForUser(uid: string): Promise<AIProvider> {
     .collection("users").doc(uid)
     .collection("apiKeys").doc(providerName)
     .get();
+  // Per-user key takes priority; passing undefined falls back to org secret in extractTasks()
   const apiKey: string | undefined = keySnap.data()?.key as string | undefined;
 
   switch (providerName) {

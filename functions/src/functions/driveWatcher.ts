@@ -201,55 +201,63 @@ async function processUserDrive(
       let attendeeEmails: string[] = [];
       let meetingTitle = transcript.fileName; // fall back to raw filename
 
+      // For Gemini Notes docs the filename is just the meeting name (no "Meeting
+      // transcript" prefix and no date). We derive the Calendar lookup date from
+      // the file's createdTime, which is the best available approximation.
+      const calendarTitle = parsed ? parsed.meetingName : transcript.fileName;
+      const calendarDate = parsed
+        ? parsed.date
+        : transcript.createdTime.split("T")[0]; // "YYYY-MM-DD" from ISO timestamp
+
       if (!parsed) {
-        logger.warn(
-          `driveWatcher: could not parse filename "${transcript.fileName}" — ` +
-          "storing transcript without attendees"
+        logger.info(
+          `driveWatcher: filename "${transcript.fileName}" doesn't match classic transcript pattern — ` +
+          `treating as Gemini Notes doc; using createdTime date (${calendarDate}) for Calendar lookup`
         );
       } else {
         meetingTitle = parsed.meetingName;
+      }
 
-        // ── Step 3b: Look up the Calendar event to get attendees ───────────
-        try {
-          const event = await findMeetingEvent(accessToken, parsed.meetingName, parsed.date);
+      // ── Step 3b: Look up the Calendar event to get attendees ─────────────
+      try {
+        const event = await findMeetingEvent(accessToken, calendarTitle, calendarDate);
 
-          if (!event) {
-            logger.warn(
-              `driveWatcher: no Calendar event found for "${parsed.meetingName}" ` +
-              `on ${parsed.date} (user ${uid}) — storing without attendees`
-            );
-          } else {
-            // ── Step 3c: Filter to registered, active TaskBot users only ───
-            const allEmails = new Set([...event.attendees, event.organizer].filter(Boolean));
-            attendeeEmails = [...allEmails].filter((email) => activeUserEmails.has(email));
+        if (!event) {
+          logger.warn(
+            `driveWatcher: no Calendar event found for "${calendarTitle}" ` +
+            `on ${calendarDate} (user ${uid}) — storing without attendees`
+          );
+        } else {
+          // ── Step 3c: Filter to registered, active TaskBot users only ─────
+          const allEmails = new Set([...event.attendees, event.organizer].filter(Boolean));
+          attendeeEmails = [...allEmails].filter((email) => activeUserEmails.has(email));
 
-            logger.info(
-              `driveWatcher: Calendar event found for "${parsed.meetingName}" — ` +
-              `${event.attendees.length} total attendee(s), ` +
-              `${attendeeEmails.length} registered TaskBot user(s)`
-            );
-          }
-        } catch (err) {
-          const message = (err as Error).message ?? "";
-          const isPermissionError =
-            message.includes("403") ||
-            message.toLowerCase().includes("forbidden") ||
-            message.toLowerCase().includes("insufficient");
-
-          if (isPermissionError) {
-            // User hasn't granted Calendar scope — skip gracefully
-            logger.warn(
-              `driveWatcher: Calendar access denied for user ${uid} — ` +
-              "storing transcript without attendees"
-            );
-          } else {
-            logger.error(
-              `driveWatcher: Calendar API error for user ${uid}`,
-              { error: message, transcript: transcript.fileId }
-            );
-          }
-          // Either way, continue — don't drop the transcript because Calendar failed
+          logger.info(
+            `driveWatcher: Calendar event found for "${calendarTitle}" — ` +
+            `${event.attendees.length} total attendee(s), ` +
+            `${attendeeEmails.length} registered TaskBot user(s)`
+          );
         }
+      } catch (err) {
+        const message = (err as Error).message ?? "";
+        const isPermissionError =
+          message.includes("403") ||
+          message.toLowerCase().includes("forbidden") ||
+          message.toLowerCase().includes("insufficient");
+
+        if (isPermissionError) {
+          // User hasn't granted Calendar scope — skip gracefully
+          logger.warn(
+            `driveWatcher: Calendar access denied for user ${uid} — ` +
+            "storing transcript without attendees"
+          );
+        } else {
+          logger.error(
+            `driveWatcher: Calendar API error for user ${uid}`,
+            { error: message, transcript: transcript.fileId }
+          );
+        }
+        // Either way, continue — don't drop the transcript because Calendar failed
       }
 
       // ── Step 3d: Ensure the detecting user is always an attendee ─────────

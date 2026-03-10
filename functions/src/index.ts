@@ -5,7 +5,7 @@ import { onDocumentCreated } from "firebase-functions/v2/firestore";
 import { auth as functionsAuth } from "firebase-functions/v1";
 import { logger } from "firebase-functions";
 import { OAUTH_SCOPES, STATE_TTL_MS, createOAuthClient, saveTokens } from "./auth";
-import { createUser, getUser, updateUser } from "./services/firestore";
+import { createUser, getUser, updateUser, isFirstUser } from "./services/firestore";
 import { UserPreferences } from "./models/user";
 export { driveWatcher } from "./functions/driveWatcher";
 export { processTranscript } from "./functions/processTranscript";
@@ -14,6 +14,8 @@ export { taskCreator } from "./functions/taskCreator";
 export { expireProposals } from "./functions/expireProposals";
 export { api } from "./functions/api";
 export { healthCheck } from "./functions/healthCheck";
+export { slackInteraction } from "./functions/slackInteraction";
+export { syncEngine } from "./functions/syncEngine";
 
 admin.initializeApp();
 
@@ -21,30 +23,34 @@ admin.initializeApp();
 // Log a clear error at startup if required variables are missing so issues
 // are caught immediately after deployment rather than at runtime.
 {
+  // Only Google OAuth vars must be in the environment — they are needed before
+  // any user can sign in, so they cannot come from Firestore/KMS at runtime.
+  // All other credentials (AI keys, Slack, Asana) are managed via Admin > Settings.
   const required: Record<string, string> = {
     GOOGLE_CLIENT_ID: "Google OAuth Client ID",
     GOOGLE_CLIENT_SECRET: "Google OAuth Client Secret",
     OAUTH_REDIRECT_URI: "OAuth callback URI (must match GCP Console)",
     OAUTH_SUCCESS_REDIRECT: "Post-OAuth redirect URL",
+    ASANA_REDIRECT_URI: "Asana OAuth callback URI (not a secret)",
   };
 
   const missing = Object.entries(required)
     .filter(([key]) => !process.env[key])
     .map(([key, desc]) => `${key} — ${desc}`);
 
-  const aiProvider = process.env.AI_PROVIDER ?? "anthropic";
-  if (aiProvider === "anthropic" && !process.env.ANTHROPIC_API_KEY) {
-    missing.push("ANTHROPIC_API_KEY — Anthropic API key");
-  }
-  if (aiProvider === "openai" && !process.env.OPENAI_API_KEY) {
-    missing.push("OPENAI_API_KEY — OpenAI API key");
-  }
-
   if (missing.length > 0) {
     logger.error(
       "TaskBot: missing required environment variables — some functions will fail:\n" +
       missing.map((v) => `  • ${v}`).join("\n") +
       "\nSee functions/.env for configuration."
+    );
+  }
+
+  // Warn if KMS is not configured — secrets won't decrypt without it
+  if (!process.env.KMS_KEY_NAME) {
+    logger.warn(
+      "TaskBot: KMS_KEY_NAME not set — credentials stored in Admin > Settings will not decrypt. " +
+      "Set up KMS and configure KMS_KEY_NAME, or provide credentials as env vars for fallback."
     );
   }
 }
@@ -72,12 +78,16 @@ export const onUserCreated = functionsAuth.user().onCreate(async (user) => {
 
   logger.info(`New user signed up: ${uid} (${email ?? "no email"})`);
 
+  // The very first user to sign up is automatically promoted to admin.
+  const first = await isFirstUser();
+  const role = first ? "admin" : "user";
+
   await createUser(uid, {
     email: email ?? "",
     displayName: displayName ?? email ?? uid,
-  });
+  }, role);
 
-  logger.info(`Firestore user document created for ${uid}`);
+  logger.info(`Firestore user document created for ${uid} (role: ${role})`);
 });
 
 // ─── HTTP: Update User Settings ───────────────────────────────────────────────
@@ -146,10 +156,6 @@ export const updateUserSettings = onRequest(
       }
 
       // Validate individual preference values
-      if (preferences.notifyVia !== undefined && preferences.notifyVia !== "email") {
-        res.status(400).json({ error: "notifyVia must be \"email\" (only supported option in MVP)." });
-        return;
-      }
       if (preferences.autoApprove !== undefined && typeof preferences.autoApprove !== "boolean") {
         res.status(400).json({ error: "preferences.autoApprove must be a boolean." });
         return;

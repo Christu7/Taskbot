@@ -13,7 +13,9 @@
       <a href="/dashboard" class="brand">TaskBot</a>
       <nav class="site-nav">
         <a href="/dashboard">Dashboard</a>
+        <a href="/tasks">Tasks</a>
         <a href="/settings" class="active">Settings</a>
+        <a href="/admin" id="admin-link" hidden>Admin</a>
       </nav>
       <span class="user-chip" id="user-chip"></span>
       <button id="logout-btn" class="btn btn-ghost" style="margin-left:8px;font-size:13px;padding:5px 10px;">Sign out</button>
@@ -40,14 +42,83 @@
           <div class="settings-section-title">Account</div>
           <div class="account-info">
             <div class="account-email" id="account-email"></div>
-            <div class="token-status" id="token-status"></div>
           </div>
+        </div>
+
+        <!-- Connected Accounts section -->
+        <div class="settings-section">
+          <div class="settings-section-title">Connected Accounts</div>
+
+          <!-- Google row -->
           <div class="setting-row">
             <div>
-              <div class="setting-label">Google Integration</div>
-              <div class="setting-desc">Required for Drive monitoring, Calendar lookup, and sending emails.</div>
+              <div class="setting-label">Google</div>
+              <div class="setting-desc" id="token-status">Checking…</div>
             </div>
             <button id="reconnect-btn" class="btn btn-ghost">Reconnect</button>
+          </div>
+
+          <!-- Asana row -->
+          <div class="setting-row">
+            <div>
+              <div class="setting-label">Asana</div>
+              <div class="setting-desc" id="asana-status">Checking…</div>
+            </div>
+            <div style="display:flex;gap:8px;">
+              <button id="connect-asana-btn" class="btn btn-ghost" hidden>Connect Asana</button>
+              <button id="disconnect-asana-btn" class="btn btn-ghost" hidden>Disconnect</button>
+            </div>
+          </div>
+
+          <!-- Asana workspace / project selectors (shown once connected) -->
+          <div id="asana-config" hidden style="padding:0 0 12px 0;">
+            <div class="setting-row" style="border-top:none;padding-top:0;">
+              <div>
+                <div class="setting-label" style="font-size:13px;">Workspace</div>
+              </div>
+              <select id="asana-workspace" style="min-width:200px;">
+                <option value="">Loading…</option>
+              </select>
+            </div>
+            <div class="setting-row" style="border-top:none;padding-top:0;">
+              <div>
+                <div class="setting-label" style="font-size:13px;">Project</div>
+              </div>
+              <select id="asana-project" style="min-width:200px;" disabled>
+                <option value="">Select a workspace first</option>
+              </select>
+            </div>
+            <div class="setting-row" style="border-top:none;padding-top:0;">
+              <div></div>
+              <button id="save-asana-btn" class="btn btn-primary">Save Asana Settings</button>
+            </div>
+          </div>
+
+          <!-- Slack row -->
+          <div class="setting-row">
+            <div>
+              <div class="setting-label">Slack</div>
+              <div class="setting-desc" id="slack-status">Checking…</div>
+            </div>
+            <div style="display:flex;gap:8px;">
+              <button id="connect-slack-btn" class="btn btn-ghost" hidden>Connect Slack</button>
+              <button id="disconnect-slack-btn" class="btn btn-ghost" hidden>Disconnect</button>
+            </div>
+          </div>
+
+          <!-- Slack email input (shown when connecting) -->
+          <div id="slack-email-row" hidden style="padding:0 0 12px 0;">
+            <div class="setting-row" style="border-top:none;padding-top:0;">
+              <div>
+                <div class="setting-label" style="font-size:13px;">Slack email</div>
+                <div class="setting-desc" style="font-size:12px;">Enter the email address on your Slack account if it differs from your TaskBot login.</div>
+              </div>
+              <div style="display:flex;gap:8px;align-items:center;">
+                <input type="email" id="slack-email-input" style="font-size:13px;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;min-width:220px;" />
+                <button id="confirm-slack-btn" class="btn btn-primary">Connect</button>
+                <button id="cancel-slack-btn" class="btn btn-ghost">Cancel</button>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -89,66 +160,51 @@
             </select>
           </div>
 
+          <div class="setting-row">
+            <div>
+              <div class="setting-label">Notification Channel</div>
+              <div class="setting-desc">How you'd like to receive task proposal notifications.</div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:6px;">
+              <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
+                <input type="checkbox" name="notify-via" value="email"> Email
+              </label>
+              <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
+                <input type="checkbox" name="notify-via" value="slack"> Slack
+              </label>
+              <div id="notify-slack-warning" hidden style="font-size:12px;color:#e67e22;margin-top:4px;">
+                Slack is not connected. Connect it above first.
+              </div>
+            </div>
+          </div>
+
+          <div class="setting-row">
+            <div>
+              <div class="setting-label">Task Destination</div>
+              <div class="setting-desc">Where approved tasks are sent. Connect Asana above to enable Asana.</div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:6px;">
+              <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
+                <input type="checkbox" name="task-dest" value="google_tasks"> Google Tasks
+              </label>
+              <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
+                <input type="checkbox" name="task-dest" value="asana"> Asana
+              </label>
+              <div id="dest-warning" hidden style="font-size:12px;color:#e67e22;margin-top:4px;">
+                Asana is not connected. Connect it above first.
+              </div>
+            </div>
+          </div>
+
           <div class="setting-row" style="border-top:1px solid #f3f4f6;">
             <div></div>
             <button id="save-btn" class="btn btn-primary">Save Changes</button>
           </div>
         </div>
 
-        <!-- AI Provider section -->
-        <div class="settings-section" id="ai-provider-section">
-          <div class="settings-section-title">AI Provider</div>
-
-          <!-- Anthropic row -->
-          <div class="setting-row" id="row-anthropic">
-            <div>
-              <div class="setting-label">Anthropic (Claude)</div>
-              <div class="setting-desc" id="masked-anthropic">Not configured</div>
-            </div>
-            <div class="api-key-actions" id="actions-anthropic">
-              <button class="btn btn-ghost" id="add-anthropic">Add Key</button>
-            </div>
-          </div>
-          <div id="input-anthropic" hidden style="padding:0 0 12px 0;display:flex;gap:8px;align-items:center;">
-            <input type="password" id="key-input-anthropic" placeholder="sk-ant-…" style="flex:1;font-size:13px;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;" />
-            <button class="btn btn-primary" id="confirm-anthropic">Confirm</button>
-            <button class="btn btn-ghost" id="cancel-anthropic">Cancel</button>
-          </div>
-
-          <!-- OpenAI row -->
-          <div class="setting-row" id="row-openai">
-            <div>
-              <div class="setting-label">OpenAI (GPT)</div>
-              <div class="setting-desc" id="masked-openai">Not configured</div>
-            </div>
-            <div class="api-key-actions" id="actions-openai">
-              <button class="btn btn-ghost" id="add-openai">Add Key</button>
-            </div>
-          </div>
-          <div id="input-openai" hidden style="padding:0 0 12px 0;display:flex;gap:8px;align-items:center;">
-            <input type="password" id="key-input-openai" placeholder="sk-…" style="flex:1;font-size:13px;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;" />
-            <button class="btn btn-primary" id="confirm-openai">Confirm</button>
-            <button class="btn btn-ghost" id="cancel-openai">Cancel</button>
-          </div>
-
-          <!-- Active provider selector -->
-          <div class="setting-row" style="border-top:1px solid #f3f4f6;">
-            <div>
-              <div class="setting-label">Active Provider</div>
-              <div class="setting-desc">Which AI provider is used to process your transcripts.</div>
-            </div>
-            <div style="display:flex;gap:8px;align-items:center;">
-              <select id="active-provider">
-                <option value="">— env default —</option>
-                <option value="anthropic">Anthropic</option>
-                <option value="openai">OpenAI</option>
-              </select>
-              <button id="save-provider-btn" class="btn btn-primary">Save Provider</button>
-            </div>
-          </div>
-        </div>
-
       </div>
+
+
     </div>
   </main>
 

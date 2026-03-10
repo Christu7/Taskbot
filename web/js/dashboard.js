@@ -1,4 +1,4 @@
-import { requireAuth, signOutUser, showToast } from "./auth.js";
+import { requireAuth, signOutUser, showToast, initAdminNav } from "./auth.js";
 import { api } from "./api.js";
 
 const loadingEl  = document.getElementById("loading");
@@ -19,6 +19,7 @@ chipEl.textContent = user.displayName || user.email;
 
 logoutBtn.addEventListener("click", () => signOutUser());
 refreshBtn.addEventListener("click", loadMeetings);
+initAdminNav();
 
 connectBtn.addEventListener("click", async () => {
   const token = await user.getIdToken();

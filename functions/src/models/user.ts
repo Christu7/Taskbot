@@ -1,7 +1,32 @@
 import { Timestamp } from "firebase-admin/firestore";
 
-/** Notification delivery channels available to the user. MVP only supports email. */
-export type NotifyVia = "email";
+/** Notification delivery channels. Stored as an array; at least one must be selected. */
+export type NotifyVia = ("email" | "slack")[];
+
+/** Task destination options. Stored as an array; at least one must be selected. */
+export type TaskDestinationPreference = ("google_tasks" | "asana")[];
+
+/**
+ * Normalises legacy single-string notifyVia values (written before the
+ * checkbox refactor) into the current array format.
+ */
+export function normalizeNotifyVia(val: unknown): ("email" | "slack")[] {
+  if (Array.isArray(val)) return val as ("email" | "slack")[];
+  if (val === "both") return ["email", "slack"];
+  if (val === "slack") return ["slack"];
+  return ["email"]; // default / "email" / anything unknown
+}
+
+/**
+ * Normalises legacy single-string taskDestination values into the current
+ * array format.
+ */
+export function normalizeTaskDestination(val: unknown): ("google_tasks" | "asana")[] {
+  if (Array.isArray(val)) return val as ("google_tasks" | "asana")[];
+  if (val === "both") return ["google_tasks", "asana"];
+  if (val === "asana") return ["asana"];
+  return ["google_tasks"]; // default / "google_tasks" / anything unknown
+}
 
 /** User-configurable preferences stored on their Firestore document. */
 export interface UserPreferences {
@@ -11,6 +36,17 @@ export interface UserPreferences {
   autoApprove: boolean;
   /** How many hours a pending proposal stays open before it expires. Default: 48. */
   proposalExpiryHours: number;
+  /**
+   * Which task system(s) to send approved tasks to.
+   * When absent, the org default (config/orgDefaults.taskDestination) is used.
+   */
+  taskDestination?: TaskDestinationPreference;
+  /** Asana workspace GID selected by the user. */
+  asanaWorkspaceId?: string;
+  /** Asana project GID selected by the user. */
+  asanaProjectId?: string;
+  /** Slack member ID (e.g. "U0123456") — populated by the Slack connect flow. */
+  slackUserId?: string;
 }
 
 /**
@@ -59,6 +95,17 @@ export interface UserDocument {
    * When absent, the server falls back to the AI_PROVIDER env var (default: "anthropic").
    */
   aiProvider?: string;
+  /**
+   * Role-based access level.
+   * - "admin": can manage org settings, users, and credentials via the admin panel.
+   * - "user": default role; can only manage their own tasks and preferences.
+   * The first user to sign up is automatically assigned "admin".
+   */
+  role: "admin" | "user";
+  /** UID of the admin who last changed this user's role. */
+  promotedBy?: string;
+  /** When the role was last changed. */
+  promotedAt?: Timestamp;
   /** When the document was first created. */
   createdAt: Timestamp;
   /** When the document was last updated. */
@@ -67,7 +114,7 @@ export interface UserDocument {
 
 /** Default preferences applied when a new user document is created. */
 export const DEFAULT_PREFERENCES: UserPreferences = {
-  notifyVia: "email",
+  notifyVia: ["email"],
   autoApprove: false,
   proposalExpiryHours: 48,
 };

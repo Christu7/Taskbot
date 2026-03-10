@@ -1,12 +1,35 @@
 import * as admin from "firebase-admin";
+import { randomBytes } from "crypto";
 import { onRequest } from "firebase-functions/v2/https";
 import { logger } from "firebase-functions";
 import { FieldValue } from "firebase-admin/firestore";
 import express, { Request, Response, NextFunction } from "express";
-import { validateApprovalToken, markApprovalTokenUsed } from "../services/approvalTokens";
+import { validateApprovalToken, markApprovalTokenUsed, generateApprovalToken } from "../services/approvalTokens";
 import { getUser, updateUser } from "../services/firestore";
 import { ProposalDocument } from "../models/proposal";
-import { UserPreferences } from "../models/user";
+import { UserPreferences, UserDocument, normalizeNotifyVia, normalizeTaskDestination } from "../models/user";
+import { routeNotification } from "../services/notifications/notificationRouter";
+import { requireAuth as authenticate, requireAdmin, AuthRequest } from "../middleware/auth";
+import { adminRouter } from "./adminApi";
+
+const APP_URL = () => process.env.APP_URL ?? "https://taskbot-fb10d.web.app";
+
+/** Confidence → sort order (high first). */
+const CONFIDENCE_ORDER: Record<string, number> = { high: 0, medium: 1, low: 2 };
+import {
+  buildAsanaAuthUrl,
+  exchangeAsanaCode,
+  saveAsanaTokens,
+  deleteAsanaTokens,
+  isAsanaConnected,
+  getValidAsanaAccessToken,
+} from "../services/asana/asanaAuth";
+import { getWorkspaces, getProjects } from "../services/asana/asanaApi";
+import { lookupUserByEmail } from "../services/slack/slackClient";
+import { getValidAccessToken } from "../auth";
+import { completeExternalRefs, updateExternalRefs } from "../services/taskDestinations/taskRouter";
+import { syncUserNow } from "./syncEngine";
+import { getSecret, isIntegrationConfigured } from "../services/secrets";
 
 const db = () => admin.firestore();
 
@@ -25,30 +48,8 @@ app.use((req: Request, _res: Response, next: NextFunction) => {
 });
 
 // ─── Auth Middleware ──────────────────────────────────────────────────────────
-
-interface AuthRequest extends Request {
-  uid: string;
-}
-
-async function authenticate(
-  req: Request,
-  res: Response,
-  next: NextFunction
-): Promise<void> {
-  const authHeader = req.headers.authorization ?? "";
-  if (!authHeader.startsWith("Bearer ")) {
-    res.status(401).json({ error: "Unauthorized" });
-    return;
-  }
-  try {
-    const token = authHeader.slice(7);
-    const decoded = await admin.auth().verifyIdToken(token);
-    (req as AuthRequest).uid = decoded.uid;
-    next();
-  } catch {
-    res.status(401).json({ error: "Invalid or expired token" });
-  }
-}
+// `authenticate`, `requireAdmin`, and `AuthRequest` are imported from
+// ../middleware/auth and re-used throughout this module.
 
 // ─── POST /auth/validate-token ────────────────────────────────────────────────
 // Validates an email approval token (single-use, time-limited) and returns:
@@ -66,15 +67,26 @@ app.post("/auth/validate-token", async (req: Request, res: Response) => {
   try {
     const { uid, meetingId } = await validateApprovalToken(token);
 
-    const [proposalsSnap, transcriptSnap] = await Promise.all([
-      db()
-        .collection("proposals").doc(meetingId).collection("tasks")
-        .where("assigneeUid", "==", uid)
-        .get(),
+    const [userSnap, transcriptSnap] = await Promise.all([
+      db().collection("users").doc(uid).get(),
       db().collection("processedTranscripts").doc(meetingId).get(),
     ]);
 
-    const proposals = proposalsSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    const userEmail = userSnap.data()?.email as string | undefined;
+    const attendeeEmails: string[] = transcriptSnap.data()?.attendeeEmails ?? [];
+    const isAttendee = !!userEmail && attendeeEmails.includes(userEmail);
+
+    const proposalsSnap = isAttendee
+      ? await db().collection("proposals").doc(meetingId).collection("tasks").get()
+      : await db().collection("proposals").doc(meetingId).collection("tasks")
+          .where("assigneeUid", "==", uid).get();
+
+    const proposals = proposalsSnap.docs
+      .map((d) => ({ id: d.id, ...(d.data() as ProposalDocument), isOwner: d.data().assigneeUid === uid }))
+      .sort((a, b) =>
+        (CONFIDENCE_ORDER[a.confidence ?? "medium"] ?? 1) -
+        (CONFIDENCE_ORDER[b.confidence ?? "medium"] ?? 1)
+      );
     const meetingTitle = transcriptSnap.data()?.meetingTitle ?? meetingId;
     const driveFileLink = transcriptSnap.data()?.driveFileLink ?? null;
 
@@ -153,15 +165,26 @@ app.get("/proposals", authenticate, async (req: Request, res: Response) => {
     return;
   }
 
-  const [proposalsSnap, transcriptSnap] = await Promise.all([
-    db()
-      .collection("proposals").doc(meetingId).collection("tasks")
-      .where("assigneeUid", "==", uid)
-      .get(),
+  const [userSnap, transcriptSnap] = await Promise.all([
+    db().collection("users").doc(uid).get(),
     db().collection("processedTranscripts").doc(meetingId).get(),
   ]);
 
-  const proposals = proposalsSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  const userEmail = userSnap.data()?.email as string | undefined;
+  const attendeeEmails: string[] = transcriptSnap.data()?.attendeeEmails ?? [];
+  const isAttendee = !!userEmail && attendeeEmails.includes(userEmail);
+
+  const proposalsSnap = isAttendee
+    ? await db().collection("proposals").doc(meetingId).collection("tasks").get()
+    : await db().collection("proposals").doc(meetingId).collection("tasks")
+        .where("assigneeUid", "==", uid).get();
+
+  const proposals = proposalsSnap.docs
+    .map((d) => ({ id: d.id, ...(d.data() as ProposalDocument), isOwner: d.data().assigneeUid === uid }))
+    .sort((a, b) =>
+      (CONFIDENCE_ORDER[a.confidence ?? "medium"] ?? 1) -
+      (CONFIDENCE_ORDER[b.confidence ?? "medium"] ?? 1)
+    );
   const meetingTitle = transcriptSnap.data()?.meetingTitle ?? meetingId;
   const driveFileLink = transcriptSnap.data()?.driveFileLink ?? "";
 
@@ -337,7 +360,20 @@ app.get("/settings", authenticate, async (req: Request, res: Response) => {
     res.status(404).json({ error: "User not found" });
     return;
   }
-  res.json(user);
+
+  // Include integration availability so the frontend can show/hide connection buttons
+  const [slackAvailable, asanaAvailable] = await Promise.all([
+    isIntegrationConfigured("slack"),
+    isIntegrationConfigured("asana"),
+  ]);
+
+  res.json({
+    ...user,
+    availableIntegrations: {
+      slack: slackAvailable,
+      asana: asanaAvailable,
+    },
+  });
 });
 
 // ─── PATCH /settings ──────────────────────────────────────────────────────────
@@ -364,6 +400,10 @@ app.patch("/settings", authenticate, async (req: Request, res: Response) => {
       "notifyVia",
       "autoApprove",
       "proposalExpiryHours",
+      "taskDestination",
+      "asanaWorkspaceId",
+      "asanaProjectId",
+      "slackUserId",
     ];
     for (const key of Object.keys(preferences) as (keyof UserPreferences)[]) {
       if (!allowed.includes(key)) {
@@ -492,6 +532,672 @@ app.delete("/settings/api-keys/:provider", authenticate, async (req: Request, re
   logger.info(`api-keys: deleted ${provider} key for user ${uid}`);
   res.json({ success: true });
 });
+
+// ─── GET /auth/asana ──────────────────────────────────────────────────────────
+// Initiates the Asana OAuth flow.
+// The caller passes their Firebase ID token as ?token= so we can tie the
+// state cookie to the correct uid without requiring a session cookie.
+
+app.get("/auth/asana", async (req: Request, res: Response) => {
+  try {
+    const idToken = req.query.token as string | undefined;
+    if (!idToken) {
+      res.status(400).json({ error: "Missing required query parameter: token" });
+      return;
+    }
+
+    const decoded = await admin.auth().verifyIdToken(idToken);
+    const uid = decoded.uid;
+
+    // Generate a CSRF state token, store it in Firestore (same pattern as Google OAuth)
+    const state = randomBytes(32).toString("hex");
+    await admin.firestore().collection("asanaOAuthStates").doc(state).set({
+      uid,
+      expiresAt: Date.now() + 10 * 60 * 1000, // 10 min
+    });
+
+    res.redirect(await buildAsanaAuthUrl(state));
+  } catch (err) {
+    const msg = (err as Error).message;
+    logger.error("asana oauthInit failed", { error: msg });
+    if (msg.includes("Secret") && msg.includes("not found")) {
+      res.status(503).json({
+        error: "Asana integration is not configured for this organisation. Contact your admin.",
+      });
+    } else {
+      res.status(500).json({ error: "Failed to initiate Asana OAuth flow." });
+    }
+  }
+});
+
+// ─── GET /auth/asana/callback ─────────────────────────────────────────────────
+// Asana redirects here after the user accepts the consent screen.
+// This URL must be registered in the Asana Developer Console.
+
+app.get("/auth/asana/callback", async (req: Request, res: Response) => {
+  const db = admin.firestore();
+
+  try {
+    const code = req.query.code as string | undefined;
+    const state = req.query.state as string | undefined;
+    const oauthError = req.query.error as string | undefined;
+
+    if (oauthError) {
+      logger.warn("User denied Asana OAuth consent", { error: oauthError });
+      res.status(403).send("Asana permission denied. Please try again.");
+      return;
+    }
+
+    if (!code || !state) {
+      res.status(400).json({ error: "Missing code or state parameter." });
+      return;
+    }
+
+    // Validate and consume state token
+    const stateRef = db.collection("asanaOAuthStates").doc(state);
+    const stateSnap = await stateRef.get();
+
+    if (!stateSnap.exists) {
+      res.status(400).json({ error: "Invalid state token. Please restart the flow." });
+      return;
+    }
+
+    const { uid, expiresAt } = stateSnap.data() as { uid: string; expiresAt: number };
+    await stateRef.delete();
+
+    if (Date.now() > expiresAt) {
+      res.status(400).json({ error: "State token expired. Please restart the flow." });
+      return;
+    }
+
+    // Exchange code for tokens
+    const tokens = await exchangeAsanaCode(code);
+    await saveAsanaTokens(uid, tokens);
+
+    logger.info(`asana oauthCallback: tokens stored for user ${uid}`);
+
+    const successUrl = process.env.OAUTH_SUCCESS_REDIRECT ?? "/";
+    res.redirect(`${successUrl}/settings?asana=connected`);
+  } catch (err) {
+    logger.error("asana oauthCallback failed", err);
+    res.status(500).send("An error occurred during Asana sign-in. Please try again.");
+  }
+});
+
+// ─── GET /settings/asana ──────────────────────────────────────────────────────
+// Returns the user's Asana connection status and saved workspace/project.
+
+app.get("/settings/asana", authenticate, async (req: Request, res: Response) => {
+  const uid = (req as AuthRequest).uid;
+
+  const connected = await isAsanaConnected(uid);
+  const user = await getUser(uid);
+  const prefs = user?.preferences ?? {};
+
+  res.json({
+    connected,
+    asanaWorkspaceId: (prefs as UserPreferences).asanaWorkspaceId ?? null,
+    asanaProjectId: (prefs as UserPreferences).asanaProjectId ?? null,
+    taskDestination: (prefs as UserPreferences).taskDestination ?? null,
+  });
+});
+
+// ─── GET /settings/asana/workspaces ───────────────────────────────────────────
+// Returns the workspaces available for the authenticated user's Asana account.
+
+app.get("/settings/asana/workspaces", authenticate, async (req: Request, res: Response) => {
+  const uid = (req as AuthRequest).uid;
+
+  try {
+    const accessToken = await getValidAsanaAccessToken(uid);
+    const workspaces = await getWorkspaces(accessToken);
+    res.json({ workspaces });
+  } catch (err) {
+    const msg = (err as Error).message;
+    logger.warn(`asana workspaces failed for user ${uid}`, { error: msg });
+    res.status(400).json({ error: msg });
+  }
+});
+
+// ─── GET /settings/asana/projects ─────────────────────────────────────────────
+// Returns projects in a given workspace.
+
+app.get("/settings/asana/projects", authenticate, async (req: Request, res: Response) => {
+  const uid = (req as AuthRequest).uid;
+  const workspaceId = req.query.workspaceId as string | undefined;
+
+  if (!workspaceId) {
+    res.status(400).json({ error: "Missing workspaceId query parameter." });
+    return;
+  }
+
+  try {
+    const accessToken = await getValidAsanaAccessToken(uid);
+    const projects = await getProjects(accessToken, workspaceId);
+    res.json({ projects });
+  } catch (err) {
+    const msg = (err as Error).message;
+    logger.warn(`asana projects failed for user ${uid}`, { error: msg });
+    res.status(400).json({ error: msg });
+  }
+});
+
+// ─── DELETE /settings/asana ───────────────────────────────────────────────────
+// Disconnects the user's Asana account.
+
+app.delete("/settings/asana", authenticate, async (req: Request, res: Response) => {
+  const uid = (req as AuthRequest).uid;
+  await deleteAsanaTokens(uid);
+  // Clear asana preferences and fall back to google_tasks
+  await updateUser(uid, {
+    "preferences.asanaWorkspaceId": FieldValue.delete(),
+    "preferences.asanaProjectId": FieldValue.delete(),
+  } as unknown as Parameters<typeof updateUser>[1]);
+  logger.info(`asana disconnected for user ${uid}`);
+  res.json({ success: true });
+});
+
+// ─── POST /settings/slack/connect ────────────────────────────────────────────
+// Looks up the user's Slack account by email using the bot token and stores
+// their Slack member ID (slackUserId) in their preferences.
+
+app.post("/settings/slack/connect", authenticate, async (req: Request, res: Response) => {
+  const uid = (req as AuthRequest).uid;
+
+  let botToken: string;
+  try {
+    botToken = await getSecret("slack.botToken");
+  } catch {
+    res.status(503).json({ error: "Slack integration is not configured. Contact your admin." });
+    return;
+  }
+
+  const { slackEmail } = req.body as { slackEmail?: string };
+
+  const user = await getUser(uid);
+  if (!user?.email) {
+    res.status(404).json({ error: "User not found." });
+    return;
+  }
+
+  const emailToLookup = slackEmail?.trim() || user.email;
+
+  try {
+    const slackUser = await lookupUserByEmail(botToken, emailToLookup);
+    if (!slackUser) {
+      res.status(404).json({ error: "No Slack account found for your email address. Make sure you are in the workspace." });
+      return;
+    }
+
+    await updateUser(uid, {
+      "preferences.slackUserId": slackUser.id,
+    } as unknown as Parameters<typeof updateUser>[1]);
+
+    logger.info(`slack: connected user ${uid} → Slack member ${slackUser.id}`);
+    res.json({ slackUserId: slackUser.id, displayName: slackUser.displayName });
+  } catch (err) {
+    const msg = (err as Error).message;
+    logger.warn(`slack connect failed for user ${uid}`, { error: msg });
+    res.status(400).json({ error: msg });
+  }
+});
+
+// ─── DELETE /settings/slack ───────────────────────────────────────────────────
+// Disconnects the user's Slack account.
+
+app.delete("/settings/slack", authenticate, async (req: Request, res: Response) => {
+  const uid = (req as AuthRequest).uid;
+  await updateUser(uid, {
+    "preferences.slackUserId": FieldValue.delete(),
+  } as unknown as Parameters<typeof updateUser>[1]);
+  logger.info(`slack disconnected for user ${uid}`);
+  res.json({ success: true });
+});
+
+// ─── GET /settings/slack ──────────────────────────────────────────────────────
+// Returns the user's Slack connection status.
+
+app.get("/settings/slack", authenticate, async (req: Request, res: Response) => {
+  const uid = (req as AuthRequest).uid;
+  const user = await getUser(uid);
+  const slackUserId = (user?.preferences as UserPreferences | undefined)?.slackUserId ?? null;
+  const notifyVia = (user?.preferences as UserPreferences | undefined)?.notifyVia ?? "email";
+  res.json({ connected: slackUserId !== null, slackUserId, notifyVia });
+});
+
+// ─── GET /tasks ───────────────────────────────────────────────────────────────
+// Returns all active tasks (created, in_progress, completed) for the user.
+// Enriched with meetingTitle and driveFileLink from processedTranscripts.
+
+app.get("/tasks", authenticate, async (req: Request, res: Response) => {
+  const uid = (req as AuthRequest).uid;
+
+  const snap = await db().collectionGroup("tasks")
+    .where("assigneeUid", "==", uid)
+    .where("status", "in", ["created", "in_progress", "completed"])
+    .orderBy("createdAt", "desc")
+    .get();
+
+  // Collect unique meetingIds and fetch titles in one batch
+  const meetingIds = [...new Set(snap.docs.map((d) => d.data().meetingId as string))];
+  const meetingMeta: Record<string, { meetingTitle: string; driveFileLink: string }> = {};
+
+  await Promise.all(
+    meetingIds.map(async (meetingId) => {
+      const tSnap = await db().collection("processedTranscripts").doc(meetingId).get();
+      meetingMeta[meetingId] = {
+        meetingTitle: tSnap.data()?.meetingTitle ?? meetingId,
+        driveFileLink: tSnap.data()?.driveFileLink ?? "",
+      };
+    })
+  );
+
+  const tasks = snap.docs.map((d) => {
+    const data = d.data() as ProposalDocument;
+    return {
+      id: d.id,
+      ...data,
+      meetingTitle: meetingMeta[data.meetingId]?.meetingTitle ?? data.meetingId,
+      driveFileLink: meetingMeta[data.meetingId]?.driveFileLink ?? "",
+    };
+  });
+
+  res.json({ tasks });
+});
+
+// ─── PATCH /tasks/:meetingId/:taskId ──────────────────────────────────────────
+// Updates a task's title, description, dueDate, status, or assigneeUid.
+// Title/description/dueDate changes are propagated to external systems.
+// Status → "completed" marks the task complete externally.
+
+app.patch(
+  "/tasks/:meetingId/:taskId",
+  authenticate,
+  async (req: Request, res: Response) => {
+    const uid = (req as AuthRequest).uid;
+    const { meetingId, taskId } = req.params;
+    const { title, description, dueDate, status, assigneeUid: newAssignee } = req.body as {
+      title?: string;
+      description?: string;
+      dueDate?: string | null;
+      status?: string;
+      assigneeUid?: string;
+    };
+
+    const validStatuses = ["created", "in_progress", "completed"];
+    if (status !== undefined && !validStatuses.includes(status)) {
+      res.status(400).json({ error: `status must be one of: ${validStatuses.join(", ")}` });
+      return;
+    }
+
+    const docRef = db().collection("proposals").doc(meetingId).collection("tasks").doc(taskId);
+    const snap = await docRef.get();
+
+    if (!snap.exists) {
+      res.status(404).json({ error: "Task not found" });
+      return;
+    }
+
+    if (snap.data()?.assigneeUid !== uid) {
+      res.status(403).json({ error: "Forbidden" });
+      return;
+    }
+
+    const task = snap.data() as ProposalDocument;
+    const update: Record<string, unknown> = {
+      localUpdatedAt: FieldValue.serverTimestamp(),
+      syncStatus: "pending_sync",
+    };
+
+    if (title !== undefined) update.editedTitle = title;
+    if (description !== undefined) update.editedDescription = description;
+    if (dueDate !== undefined) update.editedDueDate = dueDate;
+    if (status !== undefined) update.status = status;
+    if (newAssignee !== undefined) update.assigneeUid = newAssignee;
+    if (status === "completed") update.completedAt = FieldValue.serverTimestamp();
+
+    await docRef.update(update);
+
+    // Propagate title/description/dueDate to external systems
+    if (task.externalRefs?.length && (title !== undefined || description !== undefined || dueDate !== undefined)) {
+      try {
+        const accessToken = await getValidAccessToken(uid);
+        await updateExternalRefs(uid, task.externalRefs, accessToken, {
+          ...(title !== undefined && { title }),
+          ...(description !== undefined && { description }),
+          ...(dueDate !== undefined && { dueDate: dueDate ?? undefined }),
+        });
+      } catch (err) {
+        logger.warn(`tasks PATCH: external update failed for ${taskId}`, err);
+      }
+    }
+
+    // Mark complete in external systems
+    if (status === "completed" && task.externalRefs?.length) {
+      try {
+        const accessToken = await getValidAccessToken(uid);
+        await completeExternalRefs(uid, task.externalRefs, accessToken);
+      } catch (err) {
+        logger.warn(`tasks PATCH: external complete failed for ${taskId}`, err);
+      }
+    }
+
+    res.json({ success: true });
+  }
+);
+
+// ─── POST /tasks/:meetingId/:taskId/complete ──────────────────────────────────
+// Convenience endpoint — marks the task completed in Firestore and externally.
+
+app.post(
+  "/tasks/:meetingId/:taskId/complete",
+  authenticate,
+  async (req: Request, res: Response) => {
+    const uid = (req as AuthRequest).uid;
+    const { meetingId, taskId } = req.params;
+
+    const docRef = db().collection("proposals").doc(meetingId).collection("tasks").doc(taskId);
+    const snap = await docRef.get();
+
+    if (!snap.exists) { res.status(404).json({ error: "Task not found" }); return; }
+    if (snap.data()?.assigneeUid !== uid) { res.status(403).json({ error: "Forbidden" }); return; }
+
+    const task = snap.data() as ProposalDocument;
+    await docRef.update({
+      status: "completed",
+      completedAt: FieldValue.serverTimestamp(),
+      localUpdatedAt: FieldValue.serverTimestamp(),
+      syncStatus: "pending_sync",
+    });
+
+    if (task.externalRefs?.length) {
+      try {
+        const accessToken = await getValidAccessToken(uid);
+        await completeExternalRefs(uid, task.externalRefs, accessToken);
+      } catch (err) {
+        logger.warn(`tasks complete: external complete failed for ${taskId}`, err);
+      }
+    }
+
+    res.json({ success: true });
+  }
+);
+
+// ─── POST /tasks/:meetingId/:taskId/reopen ────────────────────────────────────
+// Moves a completed task back to in_progress.
+
+app.post(
+  "/tasks/:meetingId/:taskId/reopen",
+  authenticate,
+  async (req: Request, res: Response) => {
+    const uid = (req as AuthRequest).uid;
+    const { meetingId, taskId } = req.params;
+
+    const docRef = db().collection("proposals").doc(meetingId).collection("tasks").doc(taskId);
+    const snap = await docRef.get();
+
+    if (!snap.exists) { res.status(404).json({ error: "Task not found" }); return; }
+    if (snap.data()?.assigneeUid !== uid) { res.status(403).json({ error: "Forbidden" }); return; }
+
+    await docRef.update({
+      status: "in_progress",
+      completedAt: FieldValue.delete(),
+      localUpdatedAt: FieldValue.serverTimestamp(),
+      syncStatus: "pending_sync",
+    });
+    res.json({ success: true });
+  }
+);
+
+// ─── POST /tasks/:meetingId/:taskId/recreate ──────────────────────────────────
+// Recreates a task in its external system(s) after it was deleted there.
+// Calls createTask on each destination and updates the externalRefs.
+
+app.post(
+  "/tasks/:meetingId/:taskId/recreate",
+  authenticate,
+  async (req: Request, res: Response) => {
+    const uid = (req as AuthRequest).uid;
+    const { meetingId, taskId } = req.params;
+
+    const docRef = db().collection("proposals").doc(meetingId).collection("tasks").doc(taskId);
+    const snap = await docRef.get();
+
+    if (!snap.exists) { res.status(404).json({ error: "Task not found" }); return; }
+    if (snap.data()?.assigneeUid !== uid) { res.status(403).json({ error: "Forbidden" }); return; }
+
+    const task = snap.data() as ProposalDocument;
+    if (task.syncStatus !== "external_deleted") {
+      res.status(400).json({ error: "Task is not marked as externally deleted" });
+      return;
+    }
+
+    try {
+      const transcriptSnap = await db().collection("processedTranscripts").doc(meetingId).get();
+      const meetingTitle = transcriptSnap.data()?.meetingTitle ?? meetingId;
+      const driveFileLink = transcriptSnap.data()?.driveFileLink ?? "";
+      const detectedAt = transcriptSnap.data()?.detectedAt;
+      const meetingDate = detectedAt
+        ? new Date(detectedAt.seconds * 1000).toLocaleDateString("en-US", {
+            month: "short", day: "numeric", year: "numeric",
+          })
+        : "";
+
+      const accessToken = await getValidAccessToken(uid);
+      const { routeTask } = await import("../services/taskDestinations/taskRouter");
+
+      const taskData = {
+        title: task.editedTitle ?? task.title,
+        description: task.editedDescription ?? task.description,
+        ...(task.editedDueDate !== undefined
+          ? (task.editedDueDate ? { dueDate: task.editedDueDate } : {})
+          : (task.suggestedDueDate ? { dueDate: task.suggestedDueDate } : {})),
+        sourceLink: driveFileLink,
+        meetingTitle,
+        meetingDate,
+      };
+
+      const tokens = { accessToken, uid };
+      const newRefs = await routeTask(uid, taskData, tokens);
+
+      await docRef.update({
+        externalRefs: newRefs,
+        syncStatus: "synced",
+        localUpdatedAt: FieldValue.serverTimestamp(),
+        lastSyncedAt: FieldValue.serverTimestamp(),
+      });
+
+      logger.info(`recreate: task ${taskId} recreated in external system(s) by user ${uid}`);
+      res.json({ success: true, externalRefs: newRefs });
+    } catch (err) {
+      logger.error(`recreate: failed for task ${taskId}`, { error: (err as Error).message });
+      res.status(500).json({ error: (err as Error).message });
+    }
+  }
+);
+
+// ─── POST /sync/now ───────────────────────────────────────────────────────────
+// Triggers an immediate sync for the requesting user.
+// Returns { synced, errors, deleted } counts.
+
+app.post("/sync/now", authenticate, async (req: Request, res: Response) => {
+  const uid = (req as AuthRequest).uid;
+  try {
+    const result = await syncUserNow(uid);
+    res.json(result);
+  } catch (err) {
+    logger.error(`sync/now: failed for user ${uid}`, { error: (err as Error).message });
+    res.status(500).json({ error: "Sync failed" });
+  }
+});
+
+// ─── GET /users/active ────────────────────────────────────────────────────────
+// Returns all users with isActive=true. Used for the task reassign dropdown.
+
+app.get("/users/active", authenticate, async (_req: Request, res: Response) => {
+  const snap = await db().collection("users").where("isActive", "==", true).get();
+  const users = snap.docs.map((d) => ({
+    uid: d.id,
+    email: d.data().email ?? "",
+    displayName: d.data().displayName ?? d.data().email ?? "",
+  }));
+  res.json({ users });
+});
+
+// ─── POST /proposals/:meetingId/:taskId/reassign ──────────────────────────────
+// Reassigns a pending proposal to another active TaskBot user.
+// Only the current assignee may reassign. Sends a notification to the new assignee.
+
+app.post(
+  "/proposals/:meetingId/:taskId/reassign",
+  authenticate,
+  async (req: Request, res: Response) => {
+    const uid = (req as AuthRequest).uid;
+    const { meetingId, taskId } = req.params;
+    const { newAssigneeUid } = req.body as { newAssigneeUid?: string };
+
+    if (!newAssigneeUid) {
+      res.status(400).json({ error: "Missing newAssigneeUid" });
+      return;
+    }
+
+    if (newAssigneeUid === uid) {
+      res.status(400).json({ error: "New assignee must be different from the current assignee" });
+      return;
+    }
+
+    const docRef = db().collection("proposals").doc(meetingId).collection("tasks").doc(taskId);
+    const snap = await docRef.get();
+
+    if (!snap.exists) { res.status(404).json({ error: "Proposal not found" }); return; }
+
+    const proposal = snap.data() as ProposalDocument;
+    if (proposal.assigneeUid !== uid) { res.status(403).json({ error: "Forbidden" }); return; }
+    if (proposal.status !== "pending") {
+      res.status(409).json({ error: "Only pending proposals can be reassigned" });
+      return;
+    }
+
+    // Look up the new assignee
+    const [newUserSnap, currentUserSnap, transcriptSnap] = await Promise.all([
+      db().collection("users").doc(newAssigneeUid).get(),
+      db().collection("users").doc(uid).get(),
+      db().collection("processedTranscripts").doc(meetingId).get(),
+    ]);
+
+    if (!newUserSnap.exists || !(newUserSnap.data() as UserDocument).isActive) {
+      res.status(404).json({ error: "New assignee not found or inactive" });
+      return;
+    }
+
+    const newUser = newUserSnap.data() as UserDocument;
+    const currentUser = currentUserSnap.data() as UserDocument;
+    const meetingTitle = transcriptSnap.data()?.meetingTitle ?? meetingId;
+
+    await docRef.update({
+      assigneeUid: newAssigneeUid,
+      assigneeEmail: newUser.email,
+      assigneeName: newUser.displayName || newUser.email,
+      reassignedFrom: uid,
+      reassignedFromName: currentUser.displayName || currentUser.email,
+      reassignedAt: FieldValue.serverTimestamp(),
+    });
+
+    logger.info(
+      `reassign: proposal ${taskId} in meeting ${meetingId} ` +
+      `reassigned from ${uid} to ${newAssigneeUid}`
+    );
+
+    // Notify new assignee — non-fatal if it fails
+    try {
+      const senderAccessToken = await getValidAccessToken(uid);
+      const expiryHours = newUser.preferences?.proposalExpiryHours ?? 48;
+      const token = await generateApprovalToken(newAssigneeUid, meetingId, expiryHours);
+      const reviewLink = `${APP_URL()}/review?token=${token}`;
+
+      // Use updated proposal data for the notification
+      const updatedProposal = {
+        id: taskId,
+        ...proposal,
+        assigneeUid: newAssigneeUid,
+        assigneeEmail: newUser.email,
+        assigneeName: newUser.displayName || newUser.email,
+        reassignedFrom: uid,
+        reassignedFromName: currentUser.displayName || currentUser.email,
+      };
+
+      await routeNotification({
+        uid: newAssigneeUid,
+        user: newUser,
+        proposals: [updatedProposal as ProposalDocument & { id: string }],
+        meetingTitle,
+        meetingId,
+        reviewLink,
+        approveAllLink: reviewLink,
+        expiryHours,
+        senderAccessToken,
+        senderEmail: currentUser.email,
+      });
+    } catch (err) {
+      logger.warn(`reassign: notification failed for ${taskId}`, { error: (err as Error).message });
+    }
+
+    res.json({ success: true });
+  }
+);
+
+// ─── GET /config/org-defaults ─────────────────────────────────────────────────
+// Returns the organisation-wide default notification channel and task destination.
+// Admin-only.
+
+app.get("/config/org-defaults", authenticate, requireAdmin, async (req: Request, res: Response) => {
+
+  const snap = await db().collection("config").doc("orgDefaults").get();
+  const data = snap.data() ?? {};
+  res.json({
+    notifyVia: normalizeNotifyVia(data.notifyVia ?? ["email"]),
+    taskDestination: normalizeTaskDestination(data.taskDestination ?? ["google_tasks"]),
+    proposalExpiryHours: typeof data.proposalExpiryHours === "number" ? data.proposalExpiryHours : 48,
+    autoApprove: data.autoApprove === true,
+  });
+});
+
+// ─── PATCH /config/org-defaults ───────────────────────────────────────────────
+// Updates the organisation-wide defaults. Admin-only.
+
+app.patch("/config/org-defaults", authenticate, requireAdmin, async (req: Request, res: Response) => {
+  const uid = (req as AuthRequest).uid;
+
+  const { notifyVia, taskDestination, proposalExpiryHours, autoApprove } = req.body as {
+    notifyVia?: unknown;
+    taskDestination?: unknown;
+    proposalExpiryHours?: unknown;
+    autoApprove?: unknown;
+  };
+
+  const update: Record<string, unknown> = {};
+  if (notifyVia !== undefined) update.notifyVia = normalizeNotifyVia(notifyVia);
+  if (taskDestination !== undefined) update.taskDestination = normalizeTaskDestination(taskDestination);
+  if (proposalExpiryHours !== undefined) {
+    const hours = Number(proposalExpiryHours);
+    if ([24, 48, 72].includes(hours)) update.proposalExpiryHours = hours;
+  }
+  if (autoApprove !== undefined) update.autoApprove = autoApprove === true;
+
+  if (Object.keys(update).length === 0) {
+    res.status(400).json({ error: "Nothing to update" });
+    return;
+  }
+
+  await db().collection("config").doc("orgDefaults").set(update, { merge: true });
+  logger.info(`org-defaults: updated by admin ${uid}`, update);
+  res.json({ success: true });
+});
+
+// ─── Admin Routes ─────────────────────────────────────────────────────────────
+// All routes under /admin/* require authentication + admin role.
+
+app.use("/admin", authenticate, requireAdmin, adminRouter);
 
 // ─── Export ───────────────────────────────────────────────────────────────────
 

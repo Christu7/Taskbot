@@ -12,7 +12,7 @@ import { ExtractionConfidence } from "./aiExtraction";
  * expired   → Proposal was not reviewed before expiresAt; never sent to Tasks.
  * failed    → Google Tasks creation failed; user can retry from the web app.
  */
-export type ProposalStatus = "pending" | "approved" | "rejected" | "edited" | "created" | "expired" | "failed";
+export type ProposalStatus = "pending" | "approved" | "rejected" | "edited" | "created" | "in_progress" | "completed" | "expired" | "failed";
 
 /**
  * Shape of the document stored at proposals/{meetingId}/tasks/{taskId}.
@@ -61,8 +61,57 @@ export interface ProposalDocument {
   expiresAt: Timestamp;
   /** User-edited due date (overrides suggestedDueDate when set). ISO 8601 date string. */
   editedDueDate?: string | null;
-  /** Google Tasks task ID, populated after the task is created in Google Tasks. */
+  /**
+   * External task references, one entry per destination.
+   * Populated after the task is created (status = "created").
+   */
+  externalRefs?: Array<{ destination: string; externalId: string; externalUrl: string }>;
+  /**
+   * @deprecated Use externalRefs instead.
+   * Kept for backwards-compatibility with documents written before the
+   * multi-destination refactor. The migration script converts these.
+   */
   googleTaskId?: string;
   /** Error message stored when status is "failed", cleared on successful retry. */
   failureReason?: string;
+  /**
+   * Emails of co-assignees when the task was extracted as a shared task.
+   * Each co-assignee has their own proposal document; sharedWith cross-references them.
+   */
+  sharedWith?: string[];
+  /** UID of the user who originally held this proposal before reassignment. */
+  reassignedFrom?: string;
+  /** Display name of the original assignee, stored at reassignment time for display. */
+  reassignedFromName?: string;
+  /** When the proposal was reassigned to the current assignee. */
+  reassignedAt?: Timestamp;
+
+  // ── Sync tracking fields ─────────────────────────────────────────────────────
+  /**
+   * When TaskBot last polled the external system for this task's status.
+   * Null until the first sync cycle runs after task creation.
+   */
+  lastSyncedAt?: Timestamp | null;
+  /**
+   * Sync state:
+   * - synced: Firestore matches the external system
+   * - pending_sync: a local change has been made but not yet confirmed externally
+   * - sync_error: the last sync attempt failed (see syncError for details)
+   * - external_deleted: the task was deleted in the external system
+   */
+  syncStatus?: "synced" | "pending_sync" | "sync_error" | "external_deleted";
+  /**
+   * When the external system last modified this task, as reported by the API.
+   * Used for conflict resolution: if externalUpdatedAt > localUpdatedAt, the
+   * external change wins.
+   */
+  externalUpdatedAt?: Timestamp | null;
+  /**
+   * When OUR system last modified this task. Must be set on every local write
+   * (dashboard edits, status changes, API calls). NOT set by sync engine writes.
+   * This is the anchor for conflict resolution.
+   */
+  localUpdatedAt?: Timestamp;
+  /** Human-readable error stored when syncStatus === "sync_error". */
+  syncError?: string;
 }

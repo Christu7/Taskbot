@@ -26,9 +26,11 @@
     ],
     "rewrites": [
       { "source": "/api/**",     "function": "api" },
+      { "source": "/admin",      "destination": "/admin.html" },
       { "source": "/dashboard",  "destination": "/dashboard.html" },
       { "source": "/review",     "destination": "/review.html" },
-      { "source": "/settings",   "destination": "/settings.html" }
+      { "source": "/settings",   "destination": "/settings.html" },
+      { "source": "/tasks",      "destination": "/tasks.html" }
     ]
   },
   "firestore": {

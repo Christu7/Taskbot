@@ -17,34 +17,36 @@
   </div>
 
   <script type="module">
-    import { auth, signInWithGoogle, waitForAuthReady } from "./js/auth.js";
+    import { auth, signInWithGoogle, handleRedirectResult, waitForAuthReady } from "./js/auth.js";
     import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
-    // If already signed in, go straight to dashboard
-    waitForAuthReady().then((user) => {
+    const btn = document.getElementById("login-btn");
+    const err = document.getElementById("login-error");
+
+    // Redirect to dashboard whenever auth state resolves to a signed-in user
+    onAuthStateChanged(auth, (user) => {
       if (user) window.location.href = "/dashboard";
     });
 
-    document.getElementById("login-btn").addEventListener("click", async () => {
-      const btn = document.getElementById("login-btn");
-      const err = document.getElementById("login-error");
+    // Check for a pending redirect result (returning from Google sign-in page).
+    // onAuthStateChanged above handles the redirect to dashboard on success.
+    handleRedirectResult().catch((e) => {
+      err.textContent = e.message || "Sign-in failed. Try again.";
+      err.hidden = false;
+    });
+
+    btn.addEventListener("click", async () => {
       btn.disabled = true;
       btn.textContent = "Signing in…";
       err.hidden = true;
       try {
         await signInWithGoogle();
-        // onAuthStateChanged will fire and redirect
       } catch (e) {
         btn.disabled = false;
         btn.textContent = "Sign in with Google";
-        err.textContent = e.message || "Sign-in failed. Try again.";
+        err.textContent = e.message || e.code || "Sign-in failed. Try again.";
         err.hidden = false;
       }
-    });
-
-    // Redirect after successful sign-in
-    onAuthStateChanged(auth, (user) => {
-      if (user) window.location.href = "/dashboard";
     });
   </script>
 </body>

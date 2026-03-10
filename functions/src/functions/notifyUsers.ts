@@ -6,7 +6,7 @@ import { ProposalDocument } from "../models/proposal";
 import { UserDocument } from "../models/user";
 import { getValidAccessToken } from "../auth";
 import { generateApprovalToken } from "../services/approvalTokens";
-import { sendProposalNotification } from "../services/emailSender";
+import { routeNotification } from "../services/notifications/notificationRouter";
 
 const db = () => admin.firestore();
 const APP_URL = () => process.env.APP_URL ?? "https://taskbot-fb10d.web.app";
@@ -33,8 +33,9 @@ export const notifyUsers = onDocumentUpdated(
   {
     document: "processedTranscripts/{meetingId}",
     region: "us-central1",
-    // Gmail API sends + token refresh for each attendee; 120 s gives headroom.
+    // Gmail API sends + Slack + org-defaults Firestore read per attendee.
     timeoutSeconds: 120,
+    memory: "512MiB",
   },
   async (event) => {
     const before = event.data?.before.data() as ProcessedTranscriptDocument | undefined;
@@ -88,9 +89,9 @@ export const notifyUsers = onDocumentUpdated(
     }
 
     // ── Group proposals by assignee ──────────────────────────────────────────
-    const byAssignee = new Map<string, ProposalDocument[]>();
+    const byAssignee = new Map<string, Array<ProposalDocument & { id: string }>>();
     for (const doc of proposalsSnap.docs) {
-      const proposal = doc.data() as ProposalDocument;
+      const proposal = { id: doc.id, ...(doc.data() as ProposalDocument) };
       const group = byAssignee.get(proposal.assigneeUid) ?? [];
       group.push(proposal);
       byAssignee.set(proposal.assigneeUid, group);
@@ -124,20 +125,21 @@ export const notifyUsers = onDocumentUpdated(
         const reviewLink = `${APP_URL()}/review?token=${token}`;
         const approveAllLink = `${APP_URL()}/review?token=${token}&action=approve_all`;
 
-        await sendProposalNotification(
-          senderAccessToken,
-          senderEmail,
-          user.email,
-          user.displayName || user.email,
-          after.meetingTitle,
+        await routeNotification({
+          uid,
+          user,
           proposals,
+          meetingTitle: after.meetingTitle,
+          meetingId,
           reviewLink,
           approveAllLink,
-          expiryHours
-        );
+          expiryHours,
+          senderAccessToken,
+          senderEmail,
+        });
 
         logger.info(
-          `notifyUsers: email sent to ${user.email} — ` +
+          `notifyUsers: notified ${user.email} — ` +
           `${proposals.length} proposal(s) for meeting ${meetingId}`
         );
       })
