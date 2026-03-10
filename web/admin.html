@@ -257,10 +257,58 @@
 
         <!-- ══ Tab: Users ══════════════════════════════════════════════════ -->
         <div id="tab-users" class="tab-pane" hidden>
-          <section class="settings-section">
-            <h2 class="settings-section-title">User Management</h2>
+
+          <!-- Stats bar -->
+          <div class="stats-bar" id="users-stats">
+            <div class="stat-card"><div class="stat-value" id="stat-total">—</div><div class="stat-label">Total Users</div></div>
+            <div class="stat-card"><div class="stat-value" id="stat-active">—</div><div class="stat-label">Active</div></div>
+            <div class="stat-card"><div class="stat-value" id="stat-admins">—</div><div class="stat-label">Admins</div></div>
+            <div class="stat-card"><div class="stat-value" id="stat-asana">—</div><div class="stat-label">Asana Connected</div></div>
+            <div class="stat-card"><div class="stat-value" id="stat-slack">—</div><div class="stat-label">Slack Connected</div></div>
+          </div>
+
+          <!-- Filter bar -->
+          <div class="filter-bar">
+            <input type="search" id="user-search" placeholder="Search by name or email…" />
+            <select id="filter-role">
+              <option value="">All roles</option>
+              <option value="admin">Admin</option>
+              <option value="user">User</option>
+            </select>
+            <select id="filter-status">
+              <option value="">All statuses</option>
+              <option value="active">Active</option>
+              <option value="inactive">Inactive</option>
+            </select>
+            <button id="invite-btn" class="btn btn-primary" style="margin-left:auto;">Invite User</button>
+          </div>
+
+          <!-- Bulk action bar (hidden until checkboxes selected) -->
+          <div class="bulk-bar" id="bulk-bar" hidden>
+            <span id="bulk-count">0 selected</span>
+            <button id="bulk-activate-btn" class="btn btn-ghost" style="font-size:13px;">Activate</button>
+            <button id="bulk-deactivate-btn" class="btn btn-ghost" style="font-size:13px;">Deactivate</button>
+            <button id="bulk-clear-btn" class="btn btn-ghost" style="font-size:13px;margin-left:auto;">Clear</button>
+          </div>
+
+          <section class="settings-section" style="padding:0;">
             <div id="users-list"><!-- Populated by admin.js --></div>
           </section>
+
+        </div>
+
+        <!-- Invite modal -->
+        <div id="invite-modal" class="modal-backdrop" hidden>
+          <div class="modal-box">
+            <h3>Invite User</h3>
+            <p>Enter the email address of the person you'd like to invite. They'll receive a link to sign in to TaskBot using Google SSO.</p>
+            <input type="email" id="invite-email" placeholder="user@example.com"
+              style="width:100%;padding:8px 12px;font-size:14px;border:1px solid #d1d5db;border-radius:6px;box-sizing:border-box;" />
+            <div class="modal-actions">
+              <button id="invite-cancel-btn" class="btn btn-ghost">Cancel</button>
+              <button id="invite-send-btn" class="btn btn-primary">Send Invite</button>
+            </div>
+          </div>
         </div>
 
         <!-- ══ Tab: Dashboard ══════════════════════════════════════════════ -->

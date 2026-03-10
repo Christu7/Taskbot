@@ -254,3 +254,78 @@ export async function sendAsanaWarningEmail(
 
   logger.info(`emailSender: sent Asana warning to ${recipientEmail}`);
 }
+
+/**
+ * Sends an invitation email via the Gmail API using the admin's OAuth tokens.
+ * The recipient receives a link to sign in to TaskBot using Google SSO.
+ *
+ * @param senderAccessToken - Valid access token for the admin, with gmail.send scope
+ * @param senderEmail       - Admin's Gmail address (used in the From header)
+ * @param recipientEmail    - Address to send the invite to
+ * @param appUrl            - The TaskBot application URL included in the CTA button
+ */
+export async function sendInviteEmail(
+  senderAccessToken: string,
+  senderEmail: string,
+  recipientEmail: string,
+  appUrl: string
+): Promise<void> {
+  const subject = "You've been invited to TaskBot";
+
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f5f5f5;font-family:Arial,Helvetica,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f5f5f5;padding:24px 0;">
+    <tr><td align="center">
+      <table width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:8px;overflow:hidden;max-width:600px;width:100%;">
+
+        <!-- Header -->
+        <tr><td style="background:#1a73e8;padding:20px 28px;">
+          <h1 style="margin:0;color:#ffffff;font-size:20px;font-weight:bold;letter-spacing:-0.5px;">TaskBot</h1>
+          <p style="margin:4px 0 0;color:#c5d8f8;font-size:13px;">Automatic action items from your meetings</p>
+        </td></tr>
+
+        <!-- Body -->
+        <tr><td style="padding:28px;">
+          <p style="margin:0 0 16px;font-size:15px;color:#333333;line-height:1.5;">
+            You've been invited to <strong>TaskBot</strong> — a tool that automatically extracts
+            action items from your meeting transcripts and creates tasks in Google Tasks or Asana.
+          </p>
+          <p style="margin:0 0 24px;font-size:15px;color:#333333;line-height:1.5;">
+            Sign in with your Google account to get started. No password required.
+          </p>
+
+          <!-- CTA -->
+          <table width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 24px;">
+            <tr><td align="center">
+              <a href="${appUrl}"
+                 style="background:#1a73e8;color:#ffffff;padding:13px 32px;text-decoration:none;
+                        border-radius:5px;font-weight:bold;font-size:15px;display:inline-block;">
+                Sign in to TaskBot
+              </a>
+            </td></tr>
+          </table>
+
+          <!-- Footer -->
+          <hr style="border:none;border-top:1px solid #e8e8e8;margin:0 0 16px;">
+          <p style="font-size:12px;color:#888888;margin:0;line-height:1.6;">
+            You received this invite because someone on your team added you to TaskBot.
+            If you were not expecting this, you can safely ignore this email.
+          </p>
+        </td></tr>
+
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+
+  const gmail = buildGmailClient(senderAccessToken);
+  await gmail.users.messages.send({
+    userId: "me",
+    requestBody: { raw: encodeRawMessage(senderEmail, recipientEmail, subject, html) },
+  });
+
+  logger.info(`emailSender: sent invite to ${recipientEmail}`);
+}

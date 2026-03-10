@@ -55,6 +55,7 @@ const isAdmin = await requireAdminRole();
 if (!isAdmin) throw new Error("not reached");
 
 await loadUsers();
+await loadUserStats();
 await loadCredentials();
 await loadOrgDefaults();
 
@@ -254,39 +255,147 @@ async function loadCredentials() {
   }
 }
 
-// ─── Load users ────────────────────────────────────────────────────────────────
+// ─── User stats ────────────────────────────────────────────────────────────────
+
+async function loadUserStats() {
+  try {
+    const stats = await api.getUserStats();
+    document.getElementById("stat-total").textContent  = stats.total;
+    document.getElementById("stat-active").textContent = stats.active;
+    document.getElementById("stat-admins").textContent = stats.admins;
+    document.getElementById("stat-asana").textContent  = stats.connectedAsana;
+    document.getElementById("stat-slack").textContent  = stats.connectedSlack;
+  } catch (err) {
+    // non-fatal — stats bar just stays at "—"
+  }
+}
+
+// ─── Load & filter users ──────────────────────────────────────────────────────
+
+let allUsers = [];
 
 async function loadUsers() {
   try {
     const { users } = await api.listUsers();
-    renderUsers(users);
+    allUsers = users;
+    applyFilters();
   } catch (err) {
     showToast("Failed to load users: " + err.message, "error");
   }
 }
 
+function applyFilters() {
+  const search = document.getElementById("user-search").value.trim().toLowerCase();
+  const role   = document.getElementById("filter-role").value;
+  const status = document.getElementById("filter-status").value;
+
+  let filtered = allUsers;
+  if (search) {
+    filtered = filtered.filter(u =>
+      (u.displayName || "").toLowerCase().includes(search) ||
+      (u.email || "").toLowerCase().includes(search)
+    );
+  }
+  if (role) filtered = filtered.filter(u => u.role === role);
+  if (status === "active")   filtered = filtered.filter(u => u.isActive);
+  if (status === "inactive") filtered = filtered.filter(u => !u.isActive);
+
+  renderUsers(filtered);
+}
+
+document.getElementById("user-search").addEventListener("input", applyFilters);
+document.getElementById("filter-role").addEventListener("change", applyFilters);
+document.getElementById("filter-status").addEventListener("change", applyFilters);
+
+// ─── Bulk selection ───────────────────────────────────────────────────────────
+
+let selectedUids = new Set();
+
+function updateBulkBar() {
+  const bar = document.getElementById("bulk-bar");
+  const count = document.getElementById("bulk-count");
+  bar.hidden = selectedUids.size === 0;
+  count.textContent = `${selectedUids.size} selected`;
+}
+
+document.getElementById("bulk-clear-btn").addEventListener("click", () => {
+  selectedUids.clear();
+  for (const cb of document.querySelectorAll(".user-checkbox")) cb.checked = false;
+  const selectAll = document.getElementById("select-all-cb");
+  if (selectAll) selectAll.checked = false;
+  updateBulkBar();
+});
+
+document.getElementById("bulk-activate-btn").addEventListener("click", () =>
+  bulkStatus(true));
+document.getElementById("bulk-deactivate-btn").addEventListener("click", () =>
+  bulkStatus(false));
+
+async function bulkStatus(isActive) {
+  const uids = [...selectedUids].filter(uid => uid !== user.uid);
+  if (!uids.length) { showToast("No eligible users selected.", "error"); return; }
+  try {
+    await api.bulkSetUserStatus(uids, isActive);
+    showToast(`${uids.length} user(s) ${isActive ? "activated" : "deactivated"}.`);
+    selectedUids.clear();
+    updateBulkBar();
+    await loadUsers();
+    await loadUserStats();
+  } catch (err) {
+    showToast("Bulk update failed: " + err.message, "error");
+  }
+}
+
+// ─── Invite modal ─────────────────────────────────────────────────────────────
+
+document.getElementById("invite-btn").addEventListener("click", () => {
+  document.getElementById("invite-email").value = "";
+  document.getElementById("invite-modal").hidden = false;
+});
+document.getElementById("invite-cancel-btn").addEventListener("click", () => {
+  document.getElementById("invite-modal").hidden = true;
+});
+document.getElementById("invite-send-btn").addEventListener("click", async () => {
+  const email = document.getElementById("invite-email").value.trim();
+  if (!email) { showToast("Enter an email address.", "error"); return; }
+  const btn = document.getElementById("invite-send-btn");
+  btn.disabled = true;
+  btn.textContent = "Sending…";
+  try {
+    await api.inviteUser(email);
+    document.getElementById("invite-modal").hidden = true;
+    showToast(`Invite sent to ${email}.`, "success");
+  } catch (err) {
+    showToast("Failed to send invite: " + err.message, "error");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Send Invite";
+  }
+});
+
+// ─── Render users table ───────────────────────────────────────────────────────
+
 function renderUsers(users) {
   usersListEl.innerHTML = "";
 
   if (!users.length) {
-    usersListEl.innerHTML = "<p class=\"empty-hint\">No users found.</p>";
+    usersListEl.innerHTML = "<p class='empty-hint' style='padding:20px;'>No users match the current filter.</p>";
     return;
   }
 
   const table = document.createElement("table");
   table.className = "admin-table";
+  table.style.fontSize = "13px";
   table.innerHTML = `
-    <colgroup>
-      <col class="col-user">
-      <col class="col-role">
-      <col class="col-active">
-      <col class="col-actions">
-    </colgroup>
     <thead>
       <tr>
+        <th style="width:32px;"><input type="checkbox" id="select-all-cb" /></th>
         <th>User</th>
         <th>Role</th>
-        <th>Active</th>
+        <th>Status</th>
+        <th>Connections</th>
+        <th>Tasks</th>
+        <th>Last Active</th>
         <th>Actions</th>
       </tr>
     </thead>
@@ -296,29 +405,45 @@ function renderUsers(users) {
 
   for (const u of users) {
     const tr = document.createElement("tr");
+    const lastActive = u.lastActiveAt
+      ? (u.lastActiveAt.toDate ? u.lastActiveAt.toDate() : new Date(u.lastActiveAt._seconds * 1000)).toLocaleDateString()
+      : "—";
+
+    const googleIcon = `<span class="conn-icon conn-ok" title="Google connected">G</span>`;
+    const asanaIcon  = u.asanaConnected
+      ? `<span class="conn-icon conn-ok" title="Asana connected">A</span>`
+      : `<span class="conn-icon conn-no" title="Asana not connected">A</span>`;
+    const slackIcon  = u.slackConnected
+      ? `<span class="conn-icon conn-ok" title="Slack connected">S</span>`
+      : `<span class="conn-icon conn-no" title="Slack not connected">S</span>`;
+
     tr.innerHTML = `
+      <td><input type="checkbox" class="user-checkbox" data-uid="${escHtml(u.uid)}" ${u.uid === user.uid ? "disabled" : ""} /></td>
       <td>
         <strong>${escHtml(u.displayName || u.email)}</strong><br>
-        <small style="color:#6b7280">${escHtml(u.email)}</small>
+        <span style="color:#6b7280">${escHtml(u.email)}</span>
       </td>
-      <td>
-        <select data-uid="${escHtml(u.uid)}" class="role-select" ${u.uid === user.uid ? "disabled" : ""}>
-          <option value="user" ${u.role === "user" ? "selected" : ""}>User</option>
-          <option value="admin" ${u.role === "admin" ? "selected" : ""}>Admin</option>
-        </select>
-      </td>
-      <td>
-        <label class="toggle-label">
-          <input type="checkbox" data-uid="${escHtml(u.uid)}" class="status-toggle"
+      <td><span class="badge badge-${u.role}">${escHtml(u.role)}</span></td>
+      <td><span class="badge badge-${u.isActive ? "active" : "inactive"}">${u.isActive ? "Active" : "Inactive"}</span></td>
+      <td style="letter-spacing:4px;">${googleIcon}${asanaIcon}${slackIcon}</td>
+      <td>${u.taskCount ?? 0}</td>
+      <td>${lastActive}</td>
+      <td style="white-space:nowrap;">
+        <label class="toggle-label" title="${u.isActive ? "Deactivate" : "Activate"}">
+          <input type="checkbox" class="status-toggle" data-uid="${escHtml(u.uid)}"
             ${u.isActive ? "checked" : ""}
             ${u.uid === user.uid ? "disabled" : ""}>
           <span class="toggle-track"></span>
         </label>
-      </td>
-      <td>
-        <button class="btn btn-ghost delete-btn" data-uid="${escHtml(u.uid)}"
+        <select data-uid="${escHtml(u.uid)}" class="role-select"
+          style="font-size:12px;padding:3px 6px;margin-left:6px;"
+          ${u.uid === user.uid ? "disabled" : ""}>
+          <option value="user"  ${u.role === "user"  ? "selected" : ""}>User</option>
+          <option value="admin" ${u.role === "admin" ? "selected" : ""}>Admin</option>
+        </select>
+        <button class="btn btn-ghost delete-btn" data-uid="${escHtml(u.uid)}" data-name="${escHtml(u.displayName || u.email)}"
           ${u.uid === user.uid ? "disabled" : ""}
-          style="color:#dc2626;font-size:13px;">Delete</button>
+          style="color:#dc2626;font-size:12px;padding:3px 8px;margin-left:4px;">Remove</button>
       </td>
     `;
     tbody.appendChild(tr);
@@ -326,13 +451,47 @@ function renderUsers(users) {
 
   usersListEl.appendChild(table);
 
+  // Select-all checkbox
+  const selectAllCb = table.querySelector("#select-all-cb");
+  selectAllCb.addEventListener("change", () => {
+    for (const cb of table.querySelectorAll(".user-checkbox:not(:disabled)")) {
+      cb.checked = selectAllCb.checked;
+      if (selectAllCb.checked) selectedUids.add(cb.dataset.uid);
+      else selectedUids.delete(cb.dataset.uid);
+    }
+    updateBulkBar();
+  });
+
+  // Per-row checkboxes
+  for (const cb of table.querySelectorAll(".user-checkbox")) {
+    cb.checked = selectedUids.has(cb.dataset.uid);
+    cb.addEventListener("change", () => {
+      if (cb.checked) selectedUids.add(cb.dataset.uid);
+      else selectedUids.delete(cb.dataset.uid);
+      const allChecked = [...table.querySelectorAll(".user-checkbox:not(:disabled)")].every(c => c.checked);
+      selectAllCb.checked = allChecked;
+      updateBulkBar();
+    });
+  }
+
+  // Role change
   for (const sel of table.querySelectorAll(".role-select")) {
     sel.addEventListener("change", async (e) => {
       const uid = sel.dataset.uid;
       const role = e.target.value;
+      const targetUser = allUsers.find(u => u.uid === uid);
+      const name = targetUser?.displayName || targetUser?.email || uid;
+
+      const verb = role === "admin" ? "promote" : "demote";
+      if (!confirm(`${verb.charAt(0).toUpperCase() + verb.slice(1)} ${name} to ${role}?`)) {
+        sel.value = role === "admin" ? "user" : "admin";
+        return;
+      }
       try {
         await api.setUserRole(uid, role);
         showToast(`Role updated to "${role}"`);
+        await loadUsers();
+        await loadUserStats();
       } catch (err) {
         showToast("Failed to update role: " + err.message, "error");
         await loadUsers();
@@ -340,12 +499,15 @@ function renderUsers(users) {
     });
   }
 
+  // Status toggle
   for (const cb of table.querySelectorAll(".status-toggle")) {
     cb.addEventListener("change", async () => {
       const uid = cb.dataset.uid;
       try {
         await api.setUserStatus(uid, cb.checked);
         showToast(`User ${cb.checked ? "activated" : "deactivated"}`);
+        await loadUsers();
+        await loadUserStats();
       } catch (err) {
         showToast("Failed to update status: " + err.message, "error");
         await loadUsers();
@@ -353,16 +515,21 @@ function renderUsers(users) {
     });
   }
 
+  // Delete / remove
   for (const btn of table.querySelectorAll(".delete-btn")) {
     btn.addEventListener("click", async () => {
       const uid = btn.dataset.uid;
-      if (!confirm("Permanently delete this user? This cannot be undone.")) return;
+      const name = btn.dataset.name;
+      if (!confirm(`Remove ${name}? This will deactivate their account and remove their stored tokens. Their existing tasks will not be deleted.`)) return;
       try {
         await api.deleteUser(uid);
-        showToast("User deleted");
+        showToast("User removed");
+        selectedUids.delete(uid);
+        updateBulkBar();
         await loadUsers();
+        await loadUserStats();
       } catch (err) {
-        showToast("Failed to delete user: " + err.message, "error");
+        showToast("Failed to remove user: " + err.message, "error");
       }
     });
   }

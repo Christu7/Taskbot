@@ -8,16 +8,45 @@ import { getUser, updateUser } from "../services/firestore";
 import { UserDocument } from "../models/user";
 import { AuthRequest } from "../middleware/auth";
 import { getMaskedSecrets, setSecrets, getSecret } from "../services/secrets";
+import { getValidAccessToken } from "../auth";
+import { sendInviteEmail } from "../services/emailSender";
 
 const router = Router();
 const db = () => admin.firestore();
 
-// ─── GET /admin/users ─────────────────────────────────────────────────────────
-// Returns a summary list of all registered users. Admin only.
+const APP_URL = process.env.APP_URL ?? "https://taskbot-fb10d.web.app";
 
-router.get("/users", async (_req: Request, res: Response) => {
+// ─── GET /admin/users ─────────────────────────────────────────────────────────
+// Returns an enriched summary list of all registered users. Admin only.
+// Accepts query params: ?search=, ?role=admin|user, ?status=active|inactive
+
+router.get("/users", async (req: Request, res: Response) => {
+  const { search, role, status } = req.query as Record<string, string | undefined>;
+
   const snap = await db().collection("users").orderBy("createdAt", "asc").get();
-  const users = snap.docs.map((d) => {
+
+  // Fetch asana token existence for all users in parallel
+  const asanaChecks = await Promise.all(
+    snap.docs.map((d) =>
+      db().doc(`users/${d.id}/tokens/asana`).get().then((t) => ({ uid: d.id, exists: t.exists }))
+    )
+  );
+  const asanaMap = new Map(asanaChecks.map((c) => [c.uid, c.exists]));
+
+  // Get task counts via a single collectionGroup query, grouped by uid in memory
+  const tasksSnap = await db()
+    .collectionGroup("tasks")
+    .where("status", "==", "created")
+    .get();
+  const taskCountMap = new Map<string, number>();
+  for (const taskDoc of tasksSnap.docs) {
+    const assigneeUid = taskDoc.data().assigneeUid as string | undefined;
+    if (assigneeUid) {
+      taskCountMap.set(assigneeUid, (taskCountMap.get(assigneeUid) ?? 0) + 1);
+    }
+  }
+
+  let users = snap.docs.map((d) => {
     const u = d.data() as UserDocument;
     return {
       uid: u.uid,
@@ -27,9 +56,58 @@ router.get("/users", async (_req: Request, res: Response) => {
       role: u.role,
       hasValidTokens: u.hasValidTokens,
       createdAt: u.createdAt,
+      asanaConnected: asanaMap.get(u.uid) ?? false,
+      slackConnected: !!u.preferences?.slackUserId,
+      taskCount: taskCountMap.get(u.uid) ?? 0,
+      lastActiveAt: u.updatedAt ?? null,
     };
   });
+
+  // Apply filters
+  if (search) {
+    const q = search.toLowerCase();
+    users = users.filter(
+      (u) =>
+        (u.displayName ?? "").toLowerCase().includes(q) ||
+        (u.email ?? "").toLowerCase().includes(q)
+    );
+  }
+  if (role === "admin" || role === "user") {
+    users = users.filter((u) => u.role === role);
+  }
+  if (status === "active") {
+    users = users.filter((u) => u.isActive);
+  } else if (status === "inactive") {
+    users = users.filter((u) => !u.isActive);
+  }
+
   res.json({ users });
+});
+
+// ─── GET /admin/users/stats ───────────────────────────────────────────────────
+// Returns aggregate user statistics. Must be registered BEFORE /:uid routes.
+
+router.get("/users/stats", async (_req: Request, res: Response) => {
+  const snap = await db().collection("users").get();
+  const users = snap.docs.map((d) => d.data() as UserDocument);
+
+  const total = users.length;
+  const active = users.filter((u) => u.isActive).length;
+  const admins = users.filter((u) => u.role === "admin").length;
+
+  // Count asana connections in parallel
+  const asanaChecks = await Promise.all(
+    snap.docs.map((d) =>
+      db().doc(`users/${d.id}/tokens/asana`).get().then((t) => t.exists)
+    )
+  );
+  const connectedAsana = asanaChecks.filter(Boolean).length;
+
+  const connectedSlack = users.filter(
+    (u) => !!u.preferences?.slackUserId
+  ).length;
+
+  res.json({ total, active, admins, connectedAsana, connectedSlack });
 });
 
 // ─── PATCH /admin/users/:uid/role ─────────────────────────────────────────────
@@ -91,9 +169,34 @@ router.patch("/users/:uid/status", async (req: Request, res: Response) => {
   res.json({ success: true });
 });
 
+// ─── PATCH /admin/users/bulk-status ──────────────────────────────────────────
+// Activate or deactivate multiple users at once.
+
+router.patch("/users/bulk-status", async (req: Request, res: Response) => {
+  const adminUid = (req as AuthRequest).uid;
+  const { uids, isActive } = req.body as { uids?: unknown; isActive?: unknown };
+
+  if (!Array.isArray(uids) || uids.length === 0) {
+    res.status(400).json({ error: "uids must be a non-empty array" });
+    return;
+  }
+  if (typeof isActive !== "boolean") {
+    res.status(400).json({ error: "isActive must be a boolean" });
+    return;
+  }
+
+  const safeUids = (uids as unknown[])
+    .filter((uid): uid is string => typeof uid === "string" && uid !== adminUid);
+
+  await Promise.all(safeUids.map((uid) => updateUser(uid, { isActive })));
+
+  logger.info(`adminApi: bulk status (isActive=${isActive}) for ${safeUids.length} user(s) by admin ${adminUid}`);
+  res.json({ success: true, updated: safeUids.length });
+});
+
 // ─── DELETE /admin/users/:uid ─────────────────────────────────────────────────
 // Remove a user's Firestore document and Firebase Auth account.
-// Admins cannot delete their own account via this endpoint.
+// Also cleans up token subcollections before deleting the main doc.
 
 router.delete("/users/:uid", async (req: Request, res: Response) => {
   const adminUid = (req as AuthRequest).uid;
@@ -110,6 +213,12 @@ router.delete("/users/:uid", async (req: Request, res: Response) => {
     return;
   }
 
+  // Delete token subcollections before deleting the main doc
+  await Promise.all([
+    db().doc(`users/${uid}/tokens/google`).delete(),
+    db().doc(`users/${uid}/tokens/asana`).delete(),
+  ]);
+
   await db().collection("users").doc(uid).delete();
 
   try {
@@ -122,6 +231,41 @@ router.delete("/users/:uid", async (req: Request, res: Response) => {
 
   logger.info(`adminApi: user ${uid} deleted by admin ${adminUid}`);
   res.json({ success: true });
+});
+
+// ─── POST /admin/invite ───────────────────────────────────────────────────────
+// Stores an invite record and sends an email invite to the specified address.
+
+router.post("/invite", async (req: Request, res: Response) => {
+  const adminUid = (req as AuthRequest).uid;
+  const { email } = req.body as { email?: unknown };
+
+  if (!email || typeof email !== "string" || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    res.status(400).json({ error: "A valid email address is required" });
+    return;
+  }
+
+  // Store the invite record
+  await db().collection("invites").doc(email).set({
+    invitedBy: adminUid,
+    invitedAt: FieldValue.serverTimestamp(),
+    accepted: false,
+  });
+
+  // Attempt to send the invite email
+  try {
+    const accessToken = await getValidAccessToken(adminUid);
+    const adminDoc = await db().collection("users").doc(adminUid).get();
+    const adminEmail = (adminDoc.data() as UserDocument | undefined)?.email ?? "";
+    await sendInviteEmail(accessToken, adminEmail, email, APP_URL);
+    logger.info(`adminApi: invite sent to ${email} by admin ${adminUid}`);
+    res.json({ success: true });
+  } catch (err) {
+    logger.warn(`adminApi: invite stored but email not sent to ${email}`, {
+      error: (err as Error).message,
+    });
+    res.json({ success: true, emailSent: false, error: (err as Error).message });
+  }
 });
 
 // ─── GET /admin/secrets ───────────────────────────────────────────────────────

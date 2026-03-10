@@ -88,6 +88,20 @@ export const onUserCreated = functionsAuth.user().onCreate(async (user) => {
   }, role);
 
   logger.info(`Firestore user document created for ${uid} (role: ${role})`);
+
+  // Check if this email has a pending invite — mark it accepted
+  if (email) {
+    try {
+      const inviteRef = admin.firestore().collection("invites").doc(email);
+      const invite = await inviteRef.get();
+      if (invite.exists && !invite.data()?.accepted) {
+        await inviteRef.update({ accepted: true, acceptedAt: admin.firestore.FieldValue.serverTimestamp() });
+        logger.info(`Invite accepted for ${email}`);
+      }
+    } catch (err) {
+      logger.warn("onUserCreated: invite check failed", { error: (err as Error).message });
+    }
+  }
 });
 
 // ─── HTTP: Update User Settings ───────────────────────────────────────────────

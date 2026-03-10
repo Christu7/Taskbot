@@ -143,8 +143,24 @@ export const api = {
   testAdminSecrets: () => request("POST", "/admin/secrets/test"),
 
   // ── Admin: User Management ────────────────────────────────────────────────
-  /** Returns a list of all registered users. Admin only. */
-  listUsers: () => request("GET", "/admin/users"),
+  /** Returns an enriched list of all registered users. Admin only. Accepts optional search/role/status params. */
+  listUsers: (params = {}) => {
+    const qs = new URLSearchParams();
+    if (params.search) qs.set("search", params.search);
+    if (params.role) qs.set("role", params.role);
+    if (params.status) qs.set("status", params.status);
+    const q = qs.toString();
+    return request("GET", `/admin/users${q ? "?" + q : ""}`);
+  },
+
+  /** Returns aggregate stats: { total, active, admins, connectedAsana, connectedSlack }. Admin only. */
+  getUserStats: () => request("GET", "/admin/users/stats"),
+
+  /** Invites a user by email — stores the invite and sends a sign-in link. Admin only. */
+  inviteUser: (email) => request("POST", "/admin/invite", { email }),
+
+  /** Activates or deactivates multiple users at once. Admin only. */
+  bulkSetUserStatus: (uids, isActive) => request("PATCH", "/admin/users/bulk-status", { uids, isActive }),
 
   /** Sets a user's role to "admin" or "user". Admin only. */
   setUserRole: (uid, role) => request("PATCH", `/admin/users/${encodeURIComponent(uid)}/role`, { role }),
