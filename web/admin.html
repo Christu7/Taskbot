@@ -33,6 +33,121 @@
         <span class="loading-spinner"></span>Loading…
       </div>
 
+      <!-- ── Setup Wizard ─────────────────────────────────────────────────── -->
+      <!-- Shown only when no credentials have been configured yet -->
+      <div id="setup-wizard" hidden>
+        <div class="wizard-container">
+
+          <!-- Progress steps -->
+          <div class="wizard-steps" id="wizard-steps">
+            <div class="wizard-step active" data-step="1"><span class="step-num">1</span>AI Provider</div>
+            <div class="wizard-step" data-step="2"><span class="step-num">2</span>Notifications</div>
+            <div class="wizard-step" data-step="3"><span class="step-num">3</span>Org Defaults</div>
+            <div class="wizard-step" data-step="4"><span class="step-num">4</span>Invite Team</div>
+          </div>
+
+          <!-- Step 1: AI Provider -->
+          <div class="wizard-pane" id="wizard-step-1">
+            <h2 class="wizard-title">Welcome to TaskBot</h2>
+            <p class="wizard-desc">Let's configure your AI provider so TaskBot can extract tasks from meeting transcripts.</p>
+            <div class="setting-row" style="border:none;padding:0;">
+              <div style="width:100%;">
+                <div class="setting-label">AI Provider</div>
+                <select id="wiz-ai-provider" style="margin:8px 0;min-width:200px;">
+                  <option value="anthropic">Anthropic (Claude)</option>
+                  <option value="openai">OpenAI (GPT)</option>
+                </select>
+                <div class="setting-label" style="margin-top:12px;">API Key</div>
+                <div class="input-reveal" style="margin-top:6px;">
+                  <input type="password" id="wiz-ai-key" class="form-input" placeholder="sk-ant-... or sk-...">
+                  <button class="reveal-btn" type="button" data-target="wiz-ai-key">Show</button>
+                </div>
+                <div id="wiz-ai-result" class="test-result-inline" hidden></div>
+              </div>
+            </div>
+            <div class="wizard-actions">
+              <button class="btn btn-ghost" id="wiz-skip-1">Skip for now</button>
+              <button class="btn btn-primary" id="wiz-save-ai">Save &amp; Continue</button>
+            </div>
+          </div>
+
+          <!-- Step 2: Notifications -->
+          <div class="wizard-pane" id="wizard-step-2" hidden>
+            <h2 class="wizard-title">Connect Notification Channels</h2>
+            <p class="wizard-desc">Configure how TaskBot notifies your team about new proposals. Both are optional — email always works as fallback.</p>
+            <div class="setting-label" style="margin-bottom:8px;">Slack Bot Token (optional)</div>
+            <div class="input-reveal" style="margin-bottom:4px;">
+              <input type="password" id="wiz-slack-token" class="form-input" placeholder="xoxb-...">
+              <button class="reveal-btn" type="button" data-target="wiz-slack-token">Show</button>
+            </div>
+            <div class="setting-label" style="margin-top:12px;margin-bottom:8px;">Slack Signing Secret (optional)</div>
+            <div class="input-reveal" style="margin-bottom:16px;">
+              <input type="password" id="wiz-slack-secret" class="form-input" placeholder="Signing secret">
+              <button class="reveal-btn" type="button" data-target="wiz-slack-secret">Show</button>
+            </div>
+            <div id="wiz-notif-result" class="test-result-inline" hidden></div>
+            <div class="wizard-actions">
+              <button class="btn btn-ghost" id="wiz-skip-2">Skip for now</button>
+              <button class="btn btn-primary" id="wiz-save-notif">Save &amp; Continue</button>
+            </div>
+          </div>
+
+          <!-- Step 3: Org Defaults -->
+          <div class="wizard-pane" id="wizard-step-3" hidden>
+            <h2 class="wizard-title">Organisation Defaults</h2>
+            <p class="wizard-desc">Set defaults for your whole team. Individual users can override these in their Settings.</p>
+            <div class="setting-row" style="border:none;padding:0;flex-wrap:wrap;gap:16px;">
+              <div>
+                <div class="setting-label">Default Notification Channel</div>
+                <select id="wiz-notify-via" style="margin-top:6px;min-width:160px;">
+                  <option value="email">Email</option>
+                  <option value="slack">Slack</option>
+                  <option value="both">Both</option>
+                </select>
+              </div>
+              <div>
+                <div class="setting-label">Default Task Destination</div>
+                <select id="wiz-task-dest" style="margin-top:6px;min-width:160px;">
+                  <option value="google_tasks">Google Tasks</option>
+                  <option value="asana">Asana</option>
+                  <option value="both">Both</option>
+                </select>
+              </div>
+              <div>
+                <div class="setting-label">Proposal Expiry</div>
+                <select id="wiz-expiry" style="margin-top:6px;min-width:130px;">
+                  <option value="24">24 hours</option>
+                  <option value="48" selected>48 hours</option>
+                  <option value="72">72 hours</option>
+                </select>
+              </div>
+            </div>
+            <div id="wiz-defaults-result" class="test-result-inline" hidden style="margin-top:12px;"></div>
+            <div class="wizard-actions">
+              <button class="btn btn-ghost" id="wiz-skip-3">Skip for now</button>
+              <button class="btn btn-primary" id="wiz-save-defaults">Save &amp; Continue</button>
+            </div>
+          </div>
+
+          <!-- Step 4: Invite Team -->
+          <div class="wizard-pane" id="wizard-step-4" hidden>
+            <h2 class="wizard-title">Invite Your Team</h2>
+            <p class="wizard-desc">Invite colleagues so they can connect their accounts and start receiving task proposals.</p>
+            <div style="display:flex;gap:8px;margin-bottom:12px;">
+              <input type="email" id="wiz-invite-email" class="form-input" placeholder="colleague@company.com" style="flex:1;">
+              <button class="btn btn-ghost" id="wiz-send-invite">Send Invite</button>
+            </div>
+            <ul id="wiz-invited-list" style="font-size:13px;color:#555;list-style:none;padding:0;margin:0;min-height:24px;"></ul>
+            <p style="font-size:12px;color:#888;margin-top:8px;">You can always invite more users from the Users tab.</p>
+            <div class="wizard-actions" style="margin-top:24px;">
+              <button class="btn btn-primary" id="wiz-finish">Finish Setup →</button>
+            </div>
+          </div>
+
+        </div>
+      </div>
+      <!-- /setup-wizard -->
+
       <div id="content" hidden>
 
         <!-- ── Admin sub-navigation ─────────────────────────────────────── -->
@@ -313,17 +428,78 @@
 
         <!-- ══ Tab: Dashboard ══════════════════════════════════════════════ -->
         <div id="tab-dashboard" class="tab-pane" hidden>
-          <section class="settings-section">
-            <h2 class="settings-section-title">Usage Dashboard</h2>
-            <p style="font-size:13px;color:#6b7280;">Usage metrics and activity — coming in a later prompt.</p>
-          </section>
+
+          <!-- Summary cards -->
+          <div class="stats-bar" id="dashboard-cards">
+            <div class="stat-card" style="flex:1;">
+              <div class="stat-value" id="dash-users">—</div>
+              <div class="stat-label" id="dash-users-sub">— active / — total</div>
+              <div class="stat-label">Users</div>
+            </div>
+            <div class="stat-card" style="flex:1;">
+              <div class="stat-value" id="dash-meetings">—</div>
+              <div class="stat-label" id="dash-meetings-sub">— this week / — total</div>
+              <div class="stat-label">Meetings Processed</div>
+            </div>
+            <div class="stat-card" style="flex:1;">
+              <div class="stat-value" id="dash-tasks">—</div>
+              <div class="stat-label" id="dash-tasks-sub">— this week / — total</div>
+              <div class="stat-label">Tasks Created</div>
+            </div>
+            <div class="stat-card" style="flex:1;">
+              <div class="stat-value" id="dash-cost">—</div>
+              <div class="stat-label" id="dash-cost-sub">— this week</div>
+              <div class="stat-label">Est. AI Cost (month)</div>
+            </div>
+          </div>
+
+          <!-- Export Data -->
+          <div style="display:flex;justify-content:flex-end;margin-bottom:12px;">
+            <button class="btn btn-ghost" id="export-btn" style="font-size:13px;">Export Data</button>
+          </div>
+
+          <!-- Activity feed + System health side by side -->
+          <div style="display:grid;grid-template-columns:1fr 320px;gap:20px;align-items:start;">
+
+            <!-- Activity feed -->
+            <section class="settings-section" style="margin-bottom:0;">
+              <h2 class="settings-section-title">Recent Activity</h2>
+              <div id="activity-feed" style="font-size:13px;line-height:1.6;">
+                <span style="color:#9ca3af;">Loading…</span>
+              </div>
+            </section>
+
+            <!-- System health -->
+            <section class="settings-section" style="margin-bottom:0;">
+              <h2 class="settings-section-title">System Health</h2>
+              <div id="health-panel" style="font-size:13px;line-height:2;">
+                <span style="color:#9ca3af;">Loading…</span>
+              </div>
+            </section>
+
+          </div>
         </div>
 
         <!-- ══ Tab: Meetings ═══════════════════════════════════════════════ -->
         <div id="tab-meetings" class="tab-pane" hidden>
-          <section class="settings-section">
-            <h2 class="settings-section-title">Meetings</h2>
-            <p style="font-size:13px;color:#6b7280;">Processed meeting transcripts view — coming in a later prompt.</p>
+
+          <!-- Filter bar -->
+          <div class="filter-bar">
+            <select id="meetings-filter-status">
+              <option value="">All statuses</option>
+              <option value="pending">Pending</option>
+              <option value="processing">Processing</option>
+              <option value="extracting">Extracting</option>
+              <option value="proposed">Proposed</option>
+              <option value="completed">Completed</option>
+              <option value="failed">Failed</option>
+              <option value="awaiting_configuration">Awaiting Config</option>
+            </select>
+            <button id="meetings-load-more-btn" class="btn btn-ghost" style="margin-left:auto;" hidden>Load more</button>
+          </div>
+
+          <section class="settings-section" style="padding:0;">
+            <div id="meetings-list"><span style="padding:20px;display:block;color:#9ca3af;">Loading…</span></div>
           </section>
         </div>
 

@@ -7,6 +7,7 @@ const emptyEl    = document.getElementById("empty-state");
 const chipEl     = document.getElementById("user-chip");
 const connectBanner = document.getElementById("connect-banner");
 const connectBtn = document.getElementById("connect-btn");
+const awaitingBanner = document.getElementById("awaiting-banner");
 const logoutBtn  = document.getElementById("logout-btn");
 const refreshBtn = document.getElementById("refresh-btn");
 
@@ -37,6 +38,16 @@ try {
   }
 } catch {
   // Non-fatal — just don't show banner
+}
+
+// Check if any meetings are stuck waiting for AI configuration
+try {
+  const { count } = await api.getAwaitingCount();
+  if (count > 0) {
+    awaitingBanner.hidden = false;
+  }
+} catch {
+  // Non-fatal
 }
 
 await loadMeetings();

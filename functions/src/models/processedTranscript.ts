@@ -16,7 +16,8 @@ export type ProcessedTranscriptStatus =
   | "extracting"
   | "proposed"
   | "completed"
-  | "failed";
+  | "failed"
+  | "awaiting_configuration";
 
 /**
  * Shape of the document stored at processedTranscripts/{driveFileId} in Firestore.
@@ -77,4 +78,6 @@ export interface ProcessedTranscriptDocument {
    * Useful for debugging and analytics.
    */
   hasNotes?: boolean;
+  /** Token usage from the AI extraction call. */
+  tokensUsed?: { input: number; output: number };
 }

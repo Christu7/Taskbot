@@ -31,6 +31,13 @@
         <button id="connect-btn" class="btn btn-primary">Connect Google Account</button>
       </div>
 
+      <!-- Awaiting configuration banner — shown when meetings are stuck waiting for AI setup -->
+      <div id="awaiting-banner" class="banner banner-info" hidden>
+        <p>One or more of your meetings could not be processed — the AI provider is not yet configured.
+           Contact your admin to set up AI credentials in the Admin Panel.
+           Once configured, the admin can reprocess these meetings.</p>
+      </div>
+
       <div class="page-header">
         <h1 class="page-title">Pending Approvals</h1>
         <button id="refresh-btn" class="btn btn-ghost" style="font-size:13px;padding:6px 12px;">Refresh</button>

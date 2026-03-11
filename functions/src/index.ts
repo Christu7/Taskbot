@@ -7,6 +7,7 @@ import { logger } from "firebase-functions";
 import { OAUTH_SCOPES, STATE_TTL_MS, createOAuthClient, saveTokens } from "./auth";
 import { createUser, getUser, updateUser, isFirstUser } from "./services/firestore";
 import { UserPreferences } from "./models/user";
+import { logActivity } from "./services/activityLogger";
 export { driveWatcher } from "./functions/driveWatcher";
 export { processTranscript } from "./functions/processTranscript";
 export { notifyUsers } from "./functions/notifyUsers";
@@ -88,6 +89,11 @@ export const onUserCreated = functionsAuth.user().onCreate(async (user) => {
   }, role);
 
   logger.info(`Firestore user document created for ${uid} (role: ${role})`);
+
+  await logActivity("user_joined",
+    `New user joined: ${displayName ?? email ?? uid}`,
+    { userId: uid }
+  );
 
   // Check if this email has a pending invite — mark it accepted
   if (email) {

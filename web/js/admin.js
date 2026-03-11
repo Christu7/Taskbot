@@ -1,11 +1,12 @@
 import { requireAuth, requireAdminRole, signOutUser, showToast } from "./auth.js";
 import { api } from "./api.js";
 
-const loadingEl  = document.getElementById("loading");
-const contentEl  = document.getElementById("content");
-const chipEl     = document.getElementById("user-chip");
-const logoutBtn  = document.getElementById("logout-btn");
-const usersListEl = document.getElementById("users-list");
+const loadingEl    = document.getElementById("loading");
+const contentEl    = document.getElementById("content");
+const wizardEl     = document.getElementById("setup-wizard");
+const chipEl       = document.getElementById("user-chip");
+const logoutBtn    = document.getElementById("logout-btn");
+const usersListEl  = document.getElementById("users-list");
 
 // Credentials elements
 const credAiProvider        = document.getElementById("cred-ai-provider");
@@ -54,23 +55,50 @@ logoutBtn.addEventListener("click", () => signOutUser());
 const isAdmin = await requireAdminRole();
 if (!isAdmin) throw new Error("not reached");
 
-await loadUsers();
-await loadUserStats();
-await loadCredentials();
-await loadOrgDefaults();
+// Check if setup wizard should be shown (first admin, no credentials yet)
+let showWizard = false;
+try {
+  const status = await api.getSetupStatus();
+  showWizard = !status.completed;
+} catch {
+  // Setup status check failed — proceed to normal panel
+}
 
-loadingEl.hidden = true;
-contentEl.hidden = false;
+if (showWizard) {
+  loadingEl.hidden = true;
+  wizardEl.hidden = false;
+  initSetupWizard();
+} else {
+  await loadUsers();
+  await loadUserStats();
+  await loadCredentials();
+  await loadOrgDefaults();
+
+  loadingEl.hidden = true;
+  contentEl.hidden = false;
+}
 
 // ─── Tab switching ─────────────────────────────────────────────────────────────
 
+let dashboardLoaded = false;
+let meetingsLoaded = false;
+
 for (const tab of document.querySelectorAll(".admin-tab")) {
-  tab.addEventListener("click", () => {
+  tab.addEventListener("click", async () => {
     const target = tab.dataset.tab;
     for (const t of document.querySelectorAll(".admin-tab")) t.classList.remove("active");
     tab.classList.add("active");
     for (const pane of document.querySelectorAll(".tab-pane")) pane.hidden = true;
     document.getElementById(`tab-${target}`).hidden = false;
+
+    if (target === "dashboard" && !dashboardLoaded) {
+      dashboardLoaded = true;
+      await loadDashboard();
+    }
+    if (target === "meetings" && !meetingsLoaded) {
+      meetingsLoaded = true;
+      await loadMeetings();
+    }
   });
 }
 
@@ -580,6 +608,415 @@ saveOrgDefaultsBtn.addEventListener("click", async () => {
     saveOrgDefaultsBtn.textContent = "Save Org Defaults";
   }
 });
+
+// ─── Dashboard ────────────────────────────────────────────────────────────────
+
+async function loadDashboard() {
+  try {
+    const [dash, { entries }] = await Promise.all([
+      api.getDashboard(),
+      api.getActivity(20),
+    ]);
+
+    // Summary cards
+    document.getElementById("dash-users").textContent = dash.users.total;
+    document.getElementById("dash-users-sub").textContent =
+      `${dash.users.active} active / ${dash.users.total} total`;
+
+    document.getElementById("dash-meetings").textContent = dash.meetings.thisWeek;
+    document.getElementById("dash-meetings-sub").textContent =
+      `${dash.meetings.thisWeek} this week / ${dash.meetings.total} total`;
+
+    document.getElementById("dash-tasks").textContent = dash.tasks.thisWeek;
+    document.getElementById("dash-tasks-sub").textContent =
+      `${dash.tasks.thisWeek} this week / ${dash.tasks.total} total`;
+
+    document.getElementById("dash-cost").textContent =
+      `$${dash.aiUsage.estimatedCostThisMonth.toFixed(2)}`;
+    document.getElementById("dash-cost-sub").textContent =
+      `$${dash.aiUsage.estimatedCostThisWeek.toFixed(2)} this week`;
+
+    // Activity feed
+    renderActivityFeed(entries);
+
+    // System health
+    renderHealthPanel(dash.integrations);
+  } catch (err) {
+    showToast("Failed to load dashboard: " + err.message, "error");
+  }
+}
+
+const ACTIVITY_ICONS = {
+  meeting_processed: "📋",
+  tasks_created: "✅",
+  notifications_sent: "📧",
+  user_joined: "👤",
+  sync_complete: "🔄",
+  reprocess_triggered: "🔁",
+  task_approved: "✓",
+};
+
+function renderActivityFeed(entries) {
+  const el = document.getElementById("activity-feed");
+  if (!entries.length) {
+    el.innerHTML = "<span style='color:#9ca3af;'>No activity yet.</span>";
+    return;
+  }
+  el.innerHTML = entries.map((e) => {
+    const icon = ACTIVITY_ICONS[e.type] || "•";
+    const ts = e.timestamp
+      ? (e.timestamp.toDate ? e.timestamp.toDate() : new Date(e.timestamp._seconds * 1000))
+          .toLocaleString()
+      : "";
+    return `<div style="display:flex;gap:10px;padding:8px 0;border-bottom:1px solid #f3f4f6;">
+      <span style="font-size:16px;flex-shrink:0;">${icon}</span>
+      <div>
+        <div>${escHtml(e.message)}</div>
+        <div style="color:#9ca3af;font-size:11px;">${ts}</div>
+      </div>
+    </div>`;
+  }).join("");
+}
+
+function renderHealthPanel(integrations) {
+  const el = document.getElementById("health-panel");
+  if (!integrations) { el.innerHTML = "<span style='color:#9ca3af;'>Unavailable</span>"; return; }
+  const rows = [
+    ["AI Provider", integrations.ai],
+    ["Slack", integrations.slack],
+    ["Asana", integrations.asana],
+  ].map(([label, val]) => {
+    const ok = val?.status === "configured" || val?.status === "ok";
+    const icon = ok ? "✓" : "✗";
+    const color = ok ? "#16a34a" : "#dc2626";
+    const detail = val?.status === "not_configured" ? "Not configured" : (val?.message ?? val?.status ?? "—");
+    return `<div style="display:flex;justify-content:space-between;padding:4px 0;">
+      <span>${escHtml(String(label))}</span>
+      <span style="color:${color};font-weight:500;">${icon} ${escHtml(String(detail))}</span>
+    </div>`;
+  });
+  el.innerHTML = rows.join('<hr style="border:none;border-top:1px solid #f3f4f6;margin:4px 0;">');
+}
+
+// ─── Meetings ─────────────────────────────────────────────────────────────────
+
+let meetingsCursor = null;
+
+async function loadMeetings(append = false) {
+  if (!append) meetingsCursor = null;
+  const status = document.getElementById("meetings-filter-status").value;
+  try {
+    const params = { limit: 30 };
+    if (status) params.status = status;
+    if (append && meetingsCursor) params.cursor = meetingsCursor;
+
+    const { meetings, nextCursor } = await api.getMeetings(params);
+    meetingsCursor = nextCursor;
+
+    const loadMoreBtn = document.getElementById("meetings-load-more-btn");
+    loadMoreBtn.hidden = !nextCursor;
+
+    if (!append) {
+      renderMeetings(meetings);
+    } else {
+      appendMeetings(meetings);
+    }
+  } catch (err) {
+    showToast("Failed to load meetings: " + err.message, "error");
+  }
+}
+
+document.getElementById("meetings-filter-status").addEventListener("change", () => loadMeetings());
+document.getElementById("meetings-load-more-btn").addEventListener("click", () => loadMeetings(true));
+
+const STATUS_COLORS = {
+  pending: "#f59e0b",
+  processing: "#3b82f6",
+  extracting: "#8b5cf6",
+  proposed: "#10b981",
+  completed: "#6b7280",
+  failed: "#ef4444",
+  awaiting_configuration: "#f97316",
+};
+
+function meetingRow(m) {
+  const color = STATUS_COLORS[m.status] || "#6b7280";
+  const date = m.detectedAt
+    ? (m.detectedAt.toDate ? m.detectedAt.toDate() : new Date(m.detectedAt._seconds * 1000))
+        .toLocaleDateString()
+    : "—";
+  const attendees = (m.attendeeEmails ?? []).length;
+  const canReprocess = m.status === "failed" || m.status === "awaiting_configuration";
+  const tokens = m.tokensUsed
+    ? `${(m.tokensUsed.input + m.tokensUsed.output).toLocaleString()} tokens`
+    : "—";
+
+  return `<tr class="meeting-row" data-meeting-id="${escHtml(m.id)}">
+    <td>
+      <a href="${escHtml(m.driveFileLink || "#")}" target="_blank" style="color:#2563eb;text-decoration:none;font-weight:500;">
+        ${escHtml(m.meetingTitle)}
+      </a>
+      ${m.error ? `<div style="color:#ef4444;font-size:11px;margin-top:2px;">${escHtml(m.error)}</div>` : ""}
+    </td>
+    <td>${date}</td>
+    <td>${escHtml(m.detectedByName || m.detectedByUid)}</td>
+    <td title="${escHtml((m.attendeeEmails || []).join(", "))}">${attendees}</td>
+    <td>${m.taskCount}</td>
+    <td><span class="badge" style="background:${color}20;color:${color};">${escHtml(m.status)}</span></td>
+    <td>${escHtml(m.transcriptFormat || "—")}</td>
+    <td>${tokens}</td>
+    <td style="white-space:nowrap;">
+      <button class="btn btn-ghost expand-meeting-btn" data-meeting-id="${escHtml(m.id)}"
+        style="font-size:12px;padding:3px 8px;">View</button>
+      ${canReprocess
+        ? `<button class="btn btn-ghost reprocess-btn" data-meeting-id="${escHtml(m.id)}" data-title="${escHtml(m.meetingTitle)}"
+            style="font-size:12px;padding:3px 8px;color:#f97316;margin-left:4px;">Reprocess</button>`
+        : ""}
+    </td>
+  </tr>
+  <tr class="meeting-detail-row" id="detail-${escHtml(m.id)}" hidden>
+    <td colspan="9" style="background:#f9fafb;padding:16px 20px;">
+      <div id="proposals-${escHtml(m.id)}"><span style="color:#9ca3af;">Loading proposals…</span></div>
+    </td>
+  </tr>`;
+}
+
+function buildMeetingsTable(meetings) {
+  if (!meetings.length) {
+    return "<p style='padding:20px;color:#9ca3af;'>No meetings found.</p>";
+  }
+  return `<table class="admin-table" style="font-size:13px;">
+    <thead><tr>
+      <th>Meeting</th><th>Date</th><th>Detected By</th>
+      <th>Attendees</th><th>Tasks</th><th>Status</th>
+      <th>Format</th><th>Tokens</th><th>Actions</th>
+    </tr></thead>
+    <tbody>${meetings.map(meetingRow).join("")}</tbody>
+  </table>`;
+}
+
+function renderMeetings(meetings) {
+  const el = document.getElementById("meetings-list");
+  el.innerHTML = buildMeetingsTable(meetings);
+  attachMeetingHandlers(el);
+}
+
+function appendMeetings(meetings) {
+  const el = document.getElementById("meetings-list");
+  const tbody = el.querySelector("tbody");
+  if (!tbody) { renderMeetings(meetings); return; }
+  const tmp = document.createElement("tbody");
+  tmp.innerHTML = meetings.map(meetingRow).join("");
+  for (const row of tmp.children) tbody.appendChild(row);
+  attachMeetingHandlers(el);
+}
+
+function attachMeetingHandlers(container) {
+  // Expand/collapse proposal rows
+  for (const btn of container.querySelectorAll(".expand-meeting-btn")) {
+    btn.addEventListener("click", async () => {
+      const mid = btn.dataset.meetingId;
+      const detailRow = document.getElementById(`detail-${mid}`);
+      if (!detailRow) return;
+      const isHidden = detailRow.hidden;
+      detailRow.hidden = !isHidden;
+      btn.textContent = isHidden ? "Hide" : "View";
+      if (isHidden) await loadProposals(mid);
+    });
+  }
+
+  // Reprocess
+  for (const btn of container.querySelectorAll(".reprocess-btn")) {
+    btn.addEventListener("click", async () => {
+      const mid = btn.dataset.meetingId;
+      const title = btn.dataset.title;
+      if (!confirm(`Reprocess "${title}"? This will re-run the AI extraction pipeline.`)) return;
+      btn.disabled = true;
+      btn.textContent = "Queuing…";
+      try {
+        await api.reprocessMeeting(mid);
+        showToast("Meeting queued for reprocessing.", "success");
+        meetingsLoaded = false;
+        await loadMeetings();
+      } catch (err) {
+        showToast("Failed to reprocess: " + err.message, "error");
+        btn.disabled = false;
+        btn.textContent = "Reprocess";
+      }
+    });
+  }
+}
+
+async function loadProposals(meetingId) {
+  const container = document.getElementById(`proposals-${meetingId}`);
+  if (!container) return;
+  try {
+    const { tasks } = await api.getProposalsForMeeting(meetingId);
+    if (!tasks.length) {
+      container.innerHTML = "<span style='color:#9ca3af;'>No proposals for this meeting.</span>";
+      return;
+    }
+    container.innerHTML = tasks.map((t) => {
+      const statusColor = { pending: "#f59e0b", approved: "#10b981", rejected: "#6b7280", created: "#3b82f6", failed: "#ef4444" }[t.status] || "#6b7280";
+      return `<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #e5e7eb;font-size:13px;">
+        <div>
+          <strong>${escHtml(t.editedTitle || t.title)}</strong>
+          <span style="color:#6b7280;margin-left:8px;">${escHtml(t.assigneeName || t.assigneeEmail || "")}</span>
+        </div>
+        <span class="badge" style="background:${statusColor}20;color:${statusColor};">${escHtml(t.status)}</span>
+      </div>`;
+    }).join("");
+  } catch (err) {
+    container.innerHTML = `<span style='color:#ef4444;'>Failed to load: ${escHtml(err.message)}</span>`;
+  }
+}
+
+// ─── Export Data ──────────────────────────────────────────────────────────────
+
+document.getElementById("export-btn")?.addEventListener("click", async () => {
+  const btn = document.getElementById("export-btn");
+  btn.disabled = true;
+  btn.textContent = "Exporting…";
+  try {
+    const response = await api.exportData();
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    a.href = url;
+    a.download = `taskbot-export-${ts}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showToast("Export downloaded.", "success");
+  } catch (err) {
+    showToast("Export failed: " + err.message, "error");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Export Data";
+  }
+});
+
+// ─── Setup Wizard ─────────────────────────────────────────────────────────────
+
+function initSetupWizard() {
+  let currentStep = 1;
+
+  // Reveal toggles in wizard
+  for (const btn of wizardEl.querySelectorAll(".reveal-btn")) {
+    btn.addEventListener("click", () => {
+      const input = wizardEl.querySelector(`#${btn.dataset.target}`);
+      if (!input) return;
+      input.type = input.type === "password" ? "text" : "password";
+      btn.textContent = input.type === "password" ? "Show" : "Hide";
+    });
+  }
+
+  function goToStep(n) {
+    // Mark previous steps done
+    for (let i = 1; i < n; i++) {
+      const stepEl = wizardEl.querySelector(`.wizard-step[data-step="${i}"]`);
+      if (stepEl) { stepEl.classList.remove("active"); stepEl.classList.add("done"); }
+    }
+    const activeStep = wizardEl.querySelector(`.wizard-step[data-step="${n}"]`);
+    if (activeStep) { activeStep.classList.add("active"); activeStep.classList.remove("done"); }
+
+    for (const pane of wizardEl.querySelectorAll(".wizard-pane")) pane.hidden = true;
+    const pane = wizardEl.querySelector(`#wizard-step-${n}`);
+    if (pane) pane.hidden = false;
+    currentStep = n;
+  }
+
+  function showWizResult(elId, ok, msg) {
+    const el = wizardEl.querySelector(`#${elId}`);
+    if (!el) return;
+    el.hidden = false;
+    el.textContent = msg;
+    el.style.color = ok ? "#16a34a" : "#ef4444";
+  }
+
+  // Step 1: AI Provider
+  wizardEl.querySelector("#wiz-skip-1")?.addEventListener("click", () => goToStep(2));
+  wizardEl.querySelector("#wiz-save-ai")?.addEventListener("click", async () => {
+    const provider = wizardEl.querySelector("#wiz-ai-provider")?.value;
+    const key = wizardEl.querySelector("#wiz-ai-key")?.value?.trim();
+    if (!key) { showWizResult("wiz-ai-result", false, "Enter an API key to continue."); return; }
+    try {
+      await api.setAdminSecrets({ ai: { provider, apiKey: key } });
+      showWizResult("wiz-ai-result", true, "✓ AI credentials saved.");
+      setTimeout(() => goToStep(2), 800);
+    } catch (err) {
+      showWizResult("wiz-ai-result", false, "Error: " + err.message);
+    }
+  });
+
+  // Step 2: Notifications
+  wizardEl.querySelector("#wiz-skip-2")?.addEventListener("click", () => goToStep(3));
+  wizardEl.querySelector("#wiz-save-notif")?.addEventListener("click", async () => {
+    const botToken = wizardEl.querySelector("#wiz-slack-token")?.value?.trim();
+    const signingSecret = wizardEl.querySelector("#wiz-slack-secret")?.value?.trim();
+    if (!botToken && !signingSecret) { goToStep(3); return; }
+    try {
+      const slack = {};
+      if (botToken) slack.botToken = botToken;
+      if (signingSecret) slack.signingSecret = signingSecret;
+      await api.setAdminSecrets({ slack });
+      showWizResult("wiz-notif-result", true, "✓ Slack credentials saved.");
+      setTimeout(() => goToStep(3), 800);
+    } catch (err) {
+      showWizResult("wiz-notif-result", false, "Error: " + err.message);
+    }
+  });
+
+  // Step 3: Org Defaults
+  wizardEl.querySelector("#wiz-skip-3")?.addEventListener("click", () => goToStep(4));
+  wizardEl.querySelector("#wiz-save-defaults")?.addEventListener("click", async () => {
+    const notifyVia = wizardEl.querySelector("#wiz-notify-via")?.value;
+    const taskDestination = wizardEl.querySelector("#wiz-task-dest")?.value;
+    const proposalExpiryHours = parseInt(wizardEl.querySelector("#wiz-expiry")?.value || "48", 10);
+    try {
+      await api.updateOrgDefaults({ notifyVia, taskDestination, proposalExpiryHours });
+      showWizResult("wiz-defaults-result", true, "✓ Org defaults saved.");
+      setTimeout(() => goToStep(4), 800);
+    } catch (err) {
+      showWizResult("wiz-defaults-result", false, "Error: " + err.message);
+    }
+  });
+
+  // Step 4: Invite + Finish
+  const invitedList = wizardEl.querySelector("#wiz-invited-list");
+  wizardEl.querySelector("#wiz-send-invite")?.addEventListener("click", async () => {
+    const email = wizardEl.querySelector("#wiz-invite-email")?.value?.trim();
+    if (!email) return;
+    try {
+      await api.inviteUser(email);
+      const li = document.createElement("li");
+      li.textContent = `✓ Invited ${email}`;
+      li.style.color = "#16a34a";
+      invitedList.appendChild(li);
+      wizardEl.querySelector("#wiz-invite-email").value = "";
+    } catch (err) {
+      showToast("Invite failed: " + err.message, "error");
+    }
+  });
+
+  wizardEl.querySelector("#wiz-finish")?.addEventListener("click", async () => {
+    try {
+      await api.completeSetup();
+      wizardEl.hidden = true;
+      // Reload the admin panel properly
+      window.location.reload();
+    } catch (err) {
+      showToast("Could not mark setup complete: " + err.message, "error");
+      // Still proceed to admin panel
+      wizardEl.hidden = true;
+      window.location.reload();
+    }
+  });
+
+  goToStep(1);
+}
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 

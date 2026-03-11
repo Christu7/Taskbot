@@ -186,6 +186,30 @@ async function loadSettings() {
       cb.checked = notifyVia.includes(cb.value);
     }
 
+    // ── Integration availability warnings ──────────────────────────────────
+    const avail = settings.availableIntegrations ?? {};
+
+    // Asana: if not configured org-wide, grey out the Asana section
+    const asanaSectionEl = document.getElementById("asana-section");
+    const asanaNotConfiguredEl = document.getElementById("asana-not-configured");
+    if (asanaSectionEl && asanaNotConfiguredEl) {
+      if (!avail.asana) {
+        asanaSectionEl.style.opacity = "0.5";
+        asanaSectionEl.style.pointerEvents = "none";
+        asanaNotConfiguredEl.hidden = false;
+      } else {
+        asanaSectionEl.style.opacity = "";
+        asanaSectionEl.style.pointerEvents = "";
+        asanaNotConfiguredEl.hidden = true;
+      }
+    }
+
+    // Slack: if not configured org-wide, show a warning when Slack notify is selected
+    const slackNotConfiguredEl = document.getElementById("slack-not-configured");
+    if (slackNotConfiguredEl) {
+      slackNotConfiguredEl.hidden = avail.slack !== false;
+    }
+
     loadingEl.hidden = true;
     contentEl.hidden = false;
   } catch (err) {

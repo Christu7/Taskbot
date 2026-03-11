@@ -1,6 +1,6 @@
 import { Router, Request, Response } from "express";
 import { logger } from "firebase-functions";
-import { FieldValue } from "firebase-admin/firestore";
+import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import * as admin from "firebase-admin";
 import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
@@ -10,6 +10,7 @@ import { AuthRequest } from "../middleware/auth";
 import { getMaskedSecrets, setSecrets, getSecret } from "../services/secrets";
 import { getValidAccessToken } from "../auth";
 import { sendInviteEmail } from "../services/emailSender";
+import { logActivity } from "../services/activityLogger";
 
 const router = Router();
 const db = () => admin.firestore();
@@ -112,6 +113,7 @@ router.get("/users/stats", async (_req: Request, res: Response) => {
 
 // ─── PATCH /admin/users/:uid/role ─────────────────────────────────────────────
 // Promote or demote a user. Admins cannot change their own role.
+// Demoting the last admin is also blocked.
 
 router.patch("/users/:uid/role", async (req: Request, res: Response) => {
   const adminUid = (req as AuthRequest).uid;
@@ -132,6 +134,15 @@ router.patch("/users/:uid/role", async (req: Request, res: Response) => {
   if (!target) {
     res.status(404).json({ error: "User not found" });
     return;
+  }
+
+  // Prevent demoting the last admin
+  if (role === "user" && target.role === "admin") {
+    const adminsSnap = await db().collection("users").where("role", "==", "admin").get();
+    if (adminsSnap.size <= 1) {
+      res.status(400).json({ error: "Cannot demote the last admin. Promote another user first." });
+      return;
+    }
   }
 
   await db().collection("users").doc(uid).update({
@@ -428,6 +439,355 @@ router.post("/secrets/test", async (_req: Request, res: Response) => {
   }
 
   res.json(results);
+});
+
+// ─── GET /admin/dashboard ─────────────────────────────────────────────────────
+
+router.get("/dashboard", async (_req: Request, res: Response) => {
+  const now = Date.now();
+  const weekAgo = new Date(now - 7 * 24 * 60 * 60 * 1000);
+  const monthAgo = new Date(now - 30 * 24 * 60 * 60 * 1000);
+  const weekAgoTs = Timestamp.fromDate(weekAgo);
+  const monthAgoTs = Timestamp.fromDate(monthAgo);
+
+  // Users
+  const usersSnap = await db().collection("users").get();
+  const users = usersSnap.docs.map((d) => d.data());
+  const totalUsers = users.length;
+  const activeUsers = users.filter((u) => u.isActive).length;
+  const adminUsers = users.filter((u) => u.role === "admin").length;
+
+  // Meetings
+  const [allMeetingsSnap, weekMeetingsSnap] = await Promise.all([
+    db().collection("processedTranscripts").count().get(),
+    db().collection("processedTranscripts")
+      .where("detectedAt", ">=", weekAgoTs)
+      .count().get(),
+  ]);
+  const totalMeetings = allMeetingsSnap.data().count;
+  const weekMeetings = weekMeetingsSnap.data().count;
+
+  // Tasks (collectionGroup)
+  const [allTasksSnap, weekTasksSnap] = await Promise.all([
+    db().collectionGroup("tasks").count().get(),
+    db().collectionGroup("tasks")
+      .where("createdAt", ">=", weekAgoTs)
+      .count().get(),
+  ]);
+  const totalTasks = allTasksSnap.data().count;
+  const weekTasks = weekTasksSnap.data().count;
+
+  // AI usage — sum tokensUsed from processedTranscripts this week/month.
+  // Filter by detectedAt only (single inequality field); skip docs without tokensUsed in memory.
+  const [weekTranscriptsSnap, monthTranscriptsSnap] = await Promise.all([
+    db().collection("processedTranscripts")
+      .where("detectedAt", ">=", weekAgoTs)
+      .get(),
+    db().collection("processedTranscripts")
+      .where("detectedAt", ">=", monthAgoTs)
+      .get(),
+  ]);
+
+  let weekInput = 0, weekOutput = 0;
+  for (const d of weekTranscriptsSnap.docs) {
+    const t = d.data().tokensUsed as { input: number; output: number } | undefined;
+    if (t) { weekInput += t.input; weekOutput += t.output; }
+  }
+  let monthInput = 0, monthOutput = 0;
+  for (const d of monthTranscriptsSnap.docs) {
+    const t = d.data().tokensUsed as { input: number; output: number } | undefined;
+    if (t) { monthInput += t.input; monthOutput += t.output; }
+  }
+
+  // Cost estimation (Anthropic Sonnet rates: $3/M input, $15/M output)
+  const weekCost = (weekInput / 1_000_000) * 3 + (weekOutput / 1_000_000) * 15;
+  const monthCost = (monthInput / 1_000_000) * 3 + (monthOutput / 1_000_000) * 15;
+
+  // Integration health
+  const integrations: Record<string, { status: string; message?: string }> = {};
+  try {
+    try { await getSecret("ai.apiKey"); integrations.ai = { status: "configured" }; }
+    catch { integrations.ai = { status: "not_configured" }; }
+    try { await getSecret("slack.botToken"); integrations.slack = { status: "configured" }; }
+    catch { integrations.slack = { status: "not_configured" }; }
+    try { await getSecret("asana.clientId"); integrations.asana = { status: "configured" }; }
+    catch { integrations.asana = { status: "not_configured" }; }
+  } catch { /* ignore */ }
+
+  res.json({
+    users: { total: totalUsers, active: activeUsers, admins: adminUsers },
+    meetings: { total: totalMeetings, thisWeek: weekMeetings },
+    tasks: { total: totalTasks, thisWeek: weekTasks },
+    aiUsage: {
+      tokensThisWeek: { input: weekInput, output: weekOutput },
+      estimatedCostThisWeek: Math.round(weekCost * 100) / 100,
+      estimatedCostThisMonth: Math.round(monthCost * 100) / 100,
+    },
+    integrations,
+  });
+});
+
+// ─── GET /admin/activity ──────────────────────────────────────────────────────
+
+router.get("/activity", async (req: Request, res: Response) => {
+  const limit = Math.min(parseInt((req.query.limit as string) ?? "20", 10), 100);
+
+  const snap = await db().collection("activityLog")
+    .orderBy("timestamp", "desc")
+    .limit(limit)
+    .get();
+
+  const entries = snap.docs.map((d) => ({
+    id: d.id,
+    ...d.data(),
+    timestamp: d.data().timestamp,
+  }));
+
+  res.json({ entries });
+});
+
+// ─── GET /admin/meetings ──────────────────────────────────────────────────────
+
+router.get("/meetings", async (req: Request, res: Response) => {
+  const limit = Math.min(parseInt((req.query.limit as string) ?? "50", 10), 200);
+  const status = req.query.status as string | undefined;
+  const cursor = req.query.cursor as string | undefined;
+
+  let query = db().collection("processedTranscripts")
+    .orderBy("detectedAt", "desc") as admin.firestore.Query;
+
+  if (status) query = query.where("status", "==", status);
+  if (cursor) {
+    const cursorDoc = await db().collection("processedTranscripts").doc(cursor).get();
+    if (cursorDoc.exists) query = query.startAfter(cursorDoc);
+  }
+
+  query = query.limit(limit);
+  const snap = await query.get();
+
+  // For each meeting, get task/proposal counts
+  const meetings = await Promise.all(snap.docs.map(async (d) => {
+    const data = d.data();
+    const proposalsSnap = await db()
+      .collection("proposals").doc(d.id)
+      .collection("tasks").count().get();
+
+    // Get detectedBy user display name
+    let detectedByName = data.detectedByUid;
+    try {
+      const userSnap = await db().collection("users").doc(data.detectedByUid).get();
+      if (userSnap.exists) {
+        detectedByName = (userSnap.data() as { displayName?: string; email?: string }).displayName
+          || (userSnap.data() as { displayName?: string; email?: string }).email
+          || data.detectedByUid;
+      }
+    } catch { /* ignore */ }
+
+    return {
+      id: d.id,
+      meetingTitle: data.meetingTitle,
+      detectedAt: data.detectedAt,
+      detectedByUid: data.detectedByUid,
+      detectedByName,
+      attendeeEmails: data.attendeeEmails ?? [],
+      status: data.status,
+      transcriptFormat: data.transcriptFormat,
+      hasNotes: data.hasNotes ?? false,
+      error: data.error,
+      taskCount: proposalsSnap.data().count,
+      tokensUsed: data.tokensUsed ?? null,
+      driveFileLink: data.driveFileLink,
+    };
+  }));
+
+  const nextCursor = snap.docs.length === limit ? snap.docs[snap.docs.length - 1].id : null;
+  res.json({ meetings, nextCursor });
+});
+
+// ─── GET /admin/meetings/:meetingId/proposals ─────────────────────────────────
+
+router.get("/meetings/:meetingId/proposals", async (req: Request, res: Response) => {
+  const { meetingId } = req.params;
+  const snap = await db()
+    .collection("proposals").doc(meetingId)
+    .collection("tasks")
+    .orderBy("createdAt", "desc")
+    .get();
+
+  const tasks = snap.docs.map((d) => {
+    const data = d.data();
+    return {
+      id: d.id,
+      title: data.title,
+      editedTitle: data.editedTitle,
+      description: data.description,
+      assigneeEmail: data.assigneeEmail,
+      assigneeName: data.assigneeName,
+      status: data.status,
+      confidence: data.confidence,
+      createdAt: data.createdAt,
+    };
+  });
+
+  res.json({ tasks });
+});
+
+// ─── POST /admin/meetings/:meetingId/reprocess ────────────────────────────────
+
+router.post("/meetings/:meetingId/reprocess", async (req: Request, res: Response) => {
+  const adminUid = (req as AuthRequest).uid;
+  const { meetingId } = req.params;
+
+  const docRef = db().collection("processedTranscripts").doc(meetingId);
+  const snap = await docRef.get();
+
+  if (!snap.exists) {
+    res.status(404).json({ error: "Meeting not found" });
+    return;
+  }
+
+  const data = snap.data() as Record<string, unknown>;
+  if (!["failed", "awaiting_configuration"].includes(data.status as string)) {
+    res.status(400).json({ error: "Only failed or awaiting_configuration meetings can be reprocessed" });
+    return;
+  }
+
+  // Delete existing proposals for this meeting
+  const proposalsSnap = await db()
+    .collection("proposals").doc(meetingId)
+    .collection("tasks").get();
+  if (!proposalsSnap.empty) {
+    const batch = db().batch();
+    proposalsSnap.docs.forEach((d) => batch.delete(d.ref));
+    await batch.commit();
+  }
+
+  // Delete and re-create the processedTranscripts doc to trigger the Cloud Function
+  const preserved = {
+    driveFileId: data.driveFileId,
+    driveFileLink: data.driveFileLink,
+    detectedByUid: data.detectedByUid,
+    meetingTitle: data.meetingTitle,
+    detectedAt: data.detectedAt,
+    attendeeEmails: data.attendeeEmails ?? [],
+    status: "pending",
+  };
+
+  await docRef.delete();
+  await docRef.set(preserved);
+
+  await logActivity("reprocess_triggered",
+    `Meeting "${data.meetingTitle}" queued for reprocessing`,
+    { meetingId, userId: adminUid }
+  );
+
+  logger.info(`adminApi: meeting ${meetingId} requeued for processing by admin ${adminUid}`);
+  res.json({ success: true });
+});
+
+// ─── GET /admin/setup-status ──────────────────────────────────────────────────
+// Returns the current onboarding setup state.
+// Used by the admin panel to show/hide the setup wizard.
+
+router.get("/setup-status", async (_req: Request, res: Response) => {
+  const [setupSnap, secretsSnap] = await Promise.all([
+    db().doc("config/setup").get(),
+    db().doc("config/secrets").get(),
+  ]);
+
+  const setupData = setupSnap.data() ?? {};
+  const secretsData = secretsSnap.data() ?? {};
+
+  // Determine which steps are done independently of the setup wizard
+  const aiConfigured = !!(secretsData.ai?.apiKey);
+  const slackConfigured = !!(secretsData.slack?.botToken);
+  const asanaConfigured = !!(secretsData.asana?.clientId);
+
+  const orgSnap = await db().doc("config/orgDefaults").get();
+  const orgConfigured = orgSnap.exists;
+
+  res.json({
+    completed: setupData.completed === true,
+    completedAt: setupData.completedAt ?? null,
+    completedBy: setupData.completedBy ?? null,
+    steps: {
+      ai: aiConfigured,
+      notifications: slackConfigured || asanaConfigured,
+      orgDefaults: orgConfigured,
+    },
+  });
+});
+
+// ─── POST /admin/setup-complete ───────────────────────────────────────────────
+// Marks the setup wizard as completed.
+
+router.post("/setup-complete", async (req: Request, res: Response) => {
+  const adminUid = (req as AuthRequest).uid;
+
+  await db().doc("config/setup").set({
+    completed: true,
+    completedAt: FieldValue.serverTimestamp(),
+    completedBy: adminUid,
+  }, { merge: true });
+
+  logger.info(`adminApi: setup wizard completed by admin ${adminUid}`);
+  res.json({ success: true });
+});
+
+// ─── POST /admin/export ───────────────────────────────────────────────────────
+// Exports all Firestore data (users, meetings, proposals) as JSON.
+// Encrypted secrets are NEVER included. Tokens subcollections are excluded.
+// Useful for migrating between projects or disaster recovery.
+
+router.post("/export", async (req: Request, res: Response) => {
+  const adminUid = (req as AuthRequest).uid;
+  logger.info(`adminApi: export requested by admin ${adminUid}`);
+
+  const exportData: Record<string, unknown> = {
+    exportedAt: new Date().toISOString(),
+    exportedBy: adminUid,
+  };
+
+  // Users — exclude tokens and apiKeys subcollections
+  const usersSnap = await db().collection("users").get();
+  exportData.users = usersSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+  // Org defaults (plaintext — safe to export)
+  const orgSnap = await db().doc("config/orgDefaults").get();
+  exportData.orgDefaults = orgSnap.exists ? orgSnap.data() : null;
+
+  // Setup state
+  const setupSnap = await db().doc("config/setup").get();
+  exportData.setup = setupSnap.exists ? setupSnap.data() : null;
+
+  // Processed transcripts (meetings)
+  const transcriptsSnap = await db().collection("processedTranscripts").orderBy("detectedAt", "desc").limit(500).get();
+  exportData.meetings = transcriptsSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+  // Proposals (tasks) — iterate per meeting to avoid collectionGroup limits
+  const proposalsData: Record<string, unknown[]> = {};
+  await Promise.all(
+    transcriptsSnap.docs.map(async (meetingDoc) => {
+      const tasksSnap = await db()
+        .collection("proposals").doc(meetingDoc.id).collection("tasks")
+        .get();
+      if (!tasksSnap.empty) {
+        proposalsData[meetingDoc.id] = tasksSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      }
+    })
+  );
+  exportData.proposals = proposalsData;
+
+  // Activity log (last 200 entries)
+  const activitySnap = await db().collection("activityLog")
+    .orderBy("timestamp", "desc").limit(200).get();
+  exportData.activityLog = activitySnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+  // Set filename-friendly timestamp
+  const ts = new Date().toISOString().replace(/[:.]/g, "-");
+  res.setHeader("Content-Disposition", `attachment; filename="taskbot-export-${ts}.json"`);
+  res.setHeader("Content-Type", "application/json");
+  res.json(exportData);
 });
 
 export { router as adminRouter };

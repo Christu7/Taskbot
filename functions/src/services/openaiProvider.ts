@@ -2,7 +2,7 @@ import OpenAI from "openai";
 import { logger } from "firebase-functions";
 import { ExtractedTask, MeetingContext } from "../models/aiExtraction";
 import { buildExtractionPrompt } from "../prompts/taskExtraction";
-import { AIProvider } from "./aiProvider";
+import { AIProvider, AIExtractionResult } from "./aiProvider";
 import { AIExtractionError } from "../utils/errors";
 import { getSecret } from "./secrets";
 
@@ -32,7 +32,7 @@ export class OpenAIProvider implements AIProvider {
     return this.client;
   }
 
-  async extractTasks(transcript: string, context: MeetingContext): Promise<ExtractedTask[]> {
+  async extractTasks(transcript: string, context: MeetingContext): Promise<AIExtractionResult> {
     const client = await this.getClient();
     const { system, user } = buildExtractionPrompt(transcript, context);
 
@@ -41,6 +41,9 @@ export class OpenAIProvider implements AIProvider {
       { role: "user", content: user },
     ];
 
+    let totalInput = 0;
+    let totalOutput = 0;
+
     // ── First attempt ──────────────────────────────────────────────────────
     const firstResponse = await client.chat.completions.create({
       model: this.model,
@@ -48,10 +51,16 @@ export class OpenAIProvider implements AIProvider {
       messages,
     });
 
+    totalInput += firstResponse.usage?.prompt_tokens ?? 0;
+    totalOutput += firstResponse.usage?.completion_tokens ?? 0;
+
     const firstText = firstResponse.choices[0]?.message?.content ?? "";
 
     try {
-      return this.parseResponse(firstText);
+      return {
+        tasks: this.parseResponse(firstText),
+        tokensUsed: { input: totalInput, output: totalOutput },
+      };
     } catch (firstErr) {
       logger.warn("openaiProvider: first response was not valid JSON — retrying", {
         error: (firstErr as Error).message,
@@ -75,10 +84,16 @@ export class OpenAIProvider implements AIProvider {
       ],
     });
 
+    totalInput += retryResponse.usage?.prompt_tokens ?? 0;
+    totalOutput += retryResponse.usage?.completion_tokens ?? 0;
+
     const retryText = retryResponse.choices[0]?.message?.content ?? "";
 
     try {
-      return this.parseResponse(retryText);
+      return {
+        tasks: this.parseResponse(retryText),
+        tokensUsed: { input: totalInput, output: totalOutput },
+      };
     } catch (err) {
       throw new AIExtractionError("openai", (err as Error).message);
     }

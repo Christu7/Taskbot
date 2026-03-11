@@ -59,6 +59,12 @@
           </div>
 
           <!-- Asana row -->
+          <div id="asana-section">
+            <!-- Not-configured notice (shown when Asana credentials not set up by admin) -->
+            <div id="asana-not-configured" class="banner banner-info" hidden style="margin:0 0 8px 0;padding:8px 12px;font-size:13px;">
+              Asana is not configured for this organisation. Ask your admin to set up Asana credentials in the Admin Panel.
+            </div>
+
           <div class="setting-row">
             <div>
               <div class="setting-label">Asana</div>
@@ -92,6 +98,14 @@
               <div></div>
               <button id="save-asana-btn" class="btn btn-primary">Save Asana Settings</button>
             </div>
+          </div>
+
+          </div><!-- /asana-section -->
+
+          <!-- Slack not-configured notice (shown when Slack bot token not set up by admin) -->
+          <div id="slack-not-configured" class="banner banner-info" hidden style="margin:0 0 8px 0;padding:8px 12px;font-size:13px;">
+            Slack is not configured for this organisation. Ask your admin to set up Slack credentials in the Admin Panel.
+            Notifications will fall back to email.
           </div>
 
           <!-- Slack row -->

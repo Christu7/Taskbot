@@ -99,6 +99,25 @@ service cloud.firestore {
       allow read, write: if isAdmin();
     }
 
+    // ── Config (setup) ────────────────────────────────────────────────────────
+    // Onboarding setup wizard completion state. Admin-only write; admins read.
+    match /config/setup {
+      allow read, write: if isAdmin();
+    }
+
+    // ── Activity Log ──────────────────────────────────────────────────────────
+    // Server-side only (Cloud Functions via Admin SDK). No client access needed
+    // since the admin panel reads it exclusively via the /api/admin/activity endpoint.
+    match /activityLog/{entry} {
+      allow read, write: if false;
+    }
+
+    // ── Invites ───────────────────────────────────────────────────────────────
+    // Created by admin API, consumed on first sign-in. No direct client access.
+    match /invites/{email} {
+      allow read, write: if false;
+    }
+
     // ── Approval Tokens ───────────────────────────────────────────────────────
     // Single-use tokens embedded in notification email links.
     // Created and validated exclusively by Cloud Functions (Admin SDK).

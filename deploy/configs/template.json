@@ -1,0 +1,13 @@
+{
+  "projectId": "",
+  "region": "us-central1",
+  "google": {
+    "oauthClientId": "",
+    "oauthClientSecret": ""
+  },
+  "kms": {
+    "keyName": ""
+  },
+  "adminEmail": "",
+  "appUrl": ""
+}

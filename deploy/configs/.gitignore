@@ -1,0 +1,10 @@
+# Client configs contain project IDs, OAuth secrets, and KMS key paths.
+# Store them securely (e.g., in a password manager or encrypted vault).
+# See README.md for instructions.
+
+# Ignore everything...
+*
+
+# ...except this file and the template
+!.gitignore
+!template.json

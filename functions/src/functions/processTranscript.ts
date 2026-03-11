@@ -11,6 +11,7 @@ import { getTranscriptContent, TranscriptContent } from "../services/drive";
 import { getUserByEmail } from "../services/firestore";
 import { extractTasksFromTranscript } from "../services/aiExtractor";
 import { AIExtractionError, TranscriptNotFoundError } from "../utils/errors";
+import { logActivity } from "../services/activityLogger";
 
 const AI_RETRY_DELAY_MS = 30_000;
 
@@ -151,10 +152,13 @@ export const processTranscript = onDocumentCreated(
 
       // ── AI extraction with one automatic retry after 30 s ──────────────
       let extractedTasks: ExtractedTask[];
+      let tokensUsed: { input: number; output: number } = { input: 0, output: 0 };
       try {
-        extractedTasks = await extractTasksFromTranscript(
+        const firstResult = await extractTasksFromTranscript(
           transcriptContent.transcript, context, transcriptDoc.detectedByUid
         );
+        extractedTasks = firstResult.tasks;
+        tokensUsed = firstResult.tokensUsed;
       } catch (firstErr) {
         if (firstErr instanceof AIExtractionError) {
           logger.warn(
@@ -163,9 +167,11 @@ export const processTranscript = onDocumentCreated(
           );
           await sleep(AI_RETRY_DELAY_MS);
           // Let this throw to the outer catch if it fails again
-          extractedTasks = await extractTasksFromTranscript(
+          const retryResult = await extractTasksFromTranscript(
             transcriptContent.transcript, context, transcriptDoc.detectedByUid
           );
+          extractedTasks = retryResult.tasks;
+          tokensUsed = retryResult.tokensUsed;
         } else {
           throw firstErr;
         }
@@ -180,6 +186,10 @@ export const processTranscript = onDocumentCreated(
           error: "No action items found in this transcript.",
         });
         logger.info(`processTranscript: no tasks found for ${meetingId} — marking completed`);
+        await logActivity("meeting_processed",
+          `Meeting "${transcriptDoc.meetingTitle}" processed — no action items found`,
+          { meetingId, userId: transcriptDoc.detectedByUid, taskCount: 0 }
+        );
         return;
       }
 
@@ -273,11 +283,17 @@ export const processTranscript = onDocumentCreated(
         status: "proposed",
         transcriptFormat: transcriptContent.format,
         hasNotes: !!transcriptContent.notes,
+        tokensUsed,
       } as Partial<ProcessedTranscriptDocument> & Record<string, unknown>);
 
       logger.info(
         `processTranscript: pipeline complete for ${meetingId} — ` +
         `${proposalCount} proposal(s) created, ${skippedCount} task(s) skipped`
+      );
+
+      await logActivity("meeting_processed",
+        `Meeting "${transcriptDoc.meetingTitle}" processed — ${proposalCount} task${proposalCount !== 1 ? "s" : ""} extracted`,
+        { meetingId, userId: transcriptDoc.detectedByUid, taskCount: proposalCount }
       );
 
     } catch (err) {

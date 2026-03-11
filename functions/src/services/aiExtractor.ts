@@ -85,10 +85,10 @@ export async function extractTasksFromTranscript(
   transcript: string,
   context: MeetingContext,
   uid?: string
-): Promise<ExtractedTask[]> {
+): Promise<{ tasks: ExtractedTask[]; tokensUsed: { input: number; output: number } }> {
   if (!transcript.trim()) {
     logger.warn("aiExtractor: received empty transcript — skipping extraction");
-    return [];
+    return { tasks: [], tokensUsed: { input: 0, output: 0 } };
   }
 
   logger.info("aiExtractor: starting extraction", {
@@ -99,7 +99,9 @@ export async function extractTasksFromTranscript(
   });
 
   const provider = uid ? await getAIProviderForUser(uid) : await getAIProvider();
-  const rawTasks = await provider.extractTasks(transcript, context);
+  const result = await provider.extractTasks(transcript, context);
+  const rawTasks = result.tasks;
+  const tokensUsed = result.tokensUsed;
 
   logger.info(`aiExtractor: model returned ${rawTasks.length} raw task(s)`);
 
@@ -121,5 +123,5 @@ export async function extractTasksFromTranscript(
     `(${rawTasks.length - validated.length} skipped due to validation errors)`
   );
 
-  return validated;
+  return { tasks: validated, tokensUsed };
 }

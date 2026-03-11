@@ -861,3 +861,66 @@ details[open] .other-tasks-summary::before {
 .modal-box p  { margin: 0 0 18px; font-size: 13px; color: #6b7280; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
 
+
+/* ── Setup Wizard ────────────────────────────────────────────────────────── */
+.wizard-container {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 32px;
+  max-width: 680px;
+  margin: 0 auto;
+}
+.wizard-steps {
+  display: flex;
+  gap: 0;
+  margin-bottom: 32px;
+  border-bottom: 2px solid #f3f4f6;
+  padding-bottom: 16px;
+}
+.wizard-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #9ca3af;
+  font-weight: 500;
+  flex: 1;
+  padding-bottom: 4px;
+}
+.wizard-step.active { color: #2563eb; }
+.wizard-step.done   { color: #16a34a; }
+.step-num {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #f3f4f6;
+  color: #6b7280;
+  font-size: 12px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.wizard-step.active .step-num { background: #2563eb; color: #fff; }
+.wizard-step.done   .step-num { background: #16a34a; color: #fff; }
+.wizard-pane { min-height: 240px; }
+.wizard-title { font-size: 20px; font-weight: 700; margin: 0 0 8px; }
+.wizard-desc  { font-size: 14px; color: #6b7280; margin: 0 0 20px; }
+.wizard-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 28px;
+  padding-top: 20px;
+  border-top: 1px solid #f3f4f6;
+}
+.form-input {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 14px;
+  box-sizing: border-box;
+}

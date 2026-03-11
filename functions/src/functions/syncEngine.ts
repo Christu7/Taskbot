@@ -4,6 +4,7 @@ import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { logger } from "firebase-functions";
 import { updateUser } from "../services/firestore";
 import { getValidAccessToken } from "../auth";
+import { logActivity } from "../services/activityLogger";
 import { ProposalDocument } from "../models/proposal";
 import { UserDocument } from "../models/user";
 import { TokenExpiredError } from "../utils/errors";
@@ -361,5 +362,12 @@ export const syncEngine = onSchedule(
       `${totalDeleted} deleted externally, ${totalErrors} task error(s), ` +
       `${totalUserErrors} user-level error(s)`
     );
+
+    if (totalSynced > 0 || totalDeleted > 0) {
+      await logActivity("sync_complete",
+        `Sync complete — ${totalSynced} task${totalSynced !== 1 ? "s" : ""} synced, ${totalDeleted} deleted externally`,
+        { synced: totalSynced, deleted: totalDeleted, errors: totalErrors }
+      );
+    }
   }
 );

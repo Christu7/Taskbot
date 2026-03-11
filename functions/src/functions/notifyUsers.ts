@@ -7,6 +7,7 @@ import { UserDocument } from "../models/user";
 import { getValidAccessToken } from "../auth";
 import { generateApprovalToken } from "../services/approvalTokens";
 import { routeNotification } from "../services/notifications/notificationRouter";
+import { logActivity } from "../services/activityLogger";
 
 const db = () => admin.firestore();
 const APP_URL = () => process.env.APP_URL ?? "https://taskbot-fb10d.web.app";
@@ -153,8 +154,16 @@ export const notifyUsers = onDocumentUpdated(
       });
     }
 
+    const sent = results.length - failures.length;
     logger.info(
-      `notifyUsers: done — ${results.length - failures.length} sent, ${failures.length} failed`
+      `notifyUsers: done — ${sent} sent, ${failures.length} failed`
     );
+
+    if (sent > 0) {
+      await logActivity("notifications_sent",
+        `Notifications sent for meeting "${after.meetingTitle}" — ${sent} user${sent !== 1 ? "s" : ""} notified`,
+        { meetingId, userId: after.detectedByUid, sent, failed: failures.length }
+      );
+    }
   }
 );

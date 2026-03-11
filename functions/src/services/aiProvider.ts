@@ -9,6 +9,12 @@ import { getSecret } from "./secrets";
 
 // ─── Interface ────────────────────────────────────────────────────────────────
 
+/** Combined result returned by every AI provider's extractTasks call. */
+export interface AIExtractionResult {
+  tasks: ExtractedTask[];
+  tokensUsed: { input: number; output: number };
+}
+
 /**
  * Abstraction over AI providers for task extraction.
  * Implement this interface to add a new provider (OpenAI, Gemini, etc.)
@@ -20,9 +26,9 @@ export interface AIProvider {
    *
    * @param transcript - Full plain-text transcript
    * @param context    - Meeting metadata passed to the model for context
-   * @returns Array of extracted tasks (may be empty if no action items found)
+   * @returns Extracted tasks and token usage counts
    */
-  extractTasks(transcript: string, context: MeetingContext): Promise<ExtractedTask[]>;
+  extractTasks(transcript: string, context: MeetingContext): Promise<AIExtractionResult>;
 }
 
 // ─── JSON parsing helpers ─────────────────────────────────────────────────────
@@ -92,9 +98,12 @@ export class AnthropicProvider implements AIProvider {
     return this.client;
   }
 
-  async extractTasks(transcript: string, context: MeetingContext): Promise<ExtractedTask[]> {
+  async extractTasks(transcript: string, context: MeetingContext): Promise<AIExtractionResult> {
     const client = await this.getClient();
     const { system, user } = buildExtractionPrompt(transcript, context);
+
+    let totalInput = 0;
+    let totalOutput = 0;
 
     // ── First attempt ──────────────────────────────────────────────────────
     const firstResponse = await client.messages.create({
@@ -104,10 +113,16 @@ export class AnthropicProvider implements AIProvider {
       messages: [{ role: "user", content: user }],
     });
 
+    totalInput += firstResponse.usage.input_tokens;
+    totalOutput += firstResponse.usage.output_tokens;
+
     const firstText = this.extractText(firstResponse);
 
     try {
-      return parseRawResponse(firstText) as ExtractedTask[];
+      return {
+        tasks: parseRawResponse(firstText) as ExtractedTask[],
+        tokensUsed: { input: totalInput, output: totalOutput },
+      };
     } catch (firstErr) {
       logger.warn("aiProvider: first response was not valid JSON — retrying", {
         error: (firstErr as Error).message,
@@ -132,10 +147,16 @@ export class AnthropicProvider implements AIProvider {
       ],
     });
 
+    totalInput += retryResponse.usage.input_tokens;
+    totalOutput += retryResponse.usage.output_tokens;
+
     const retryText = this.extractText(retryResponse);
 
     try {
-      return parseRawResponse(retryText) as ExtractedTask[];
+      return {
+        tasks: parseRawResponse(retryText) as ExtractedTask[],
+        tokensUsed: { input: totalInput, output: totalOutput },
+      };
     } catch (err) {
       throw new AIExtractionError("anthropic", (err as Error).message);
     }

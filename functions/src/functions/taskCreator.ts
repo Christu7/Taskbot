@@ -6,6 +6,7 @@ import { getValidAccessToken } from "../auth";
 import { routeTask } from "../services/taskDestinations/taskRouter";
 import { ProposalDocument } from "../models/proposal";
 import { ProcessedTranscriptDocument } from "../models/processedTranscript";
+import { logActivity } from "../services/activityLogger";
 
 const db = () => admin.firestore();
 
@@ -114,6 +115,11 @@ export const taskCreator = onDocumentUpdated(
         syncStatus: "synced",
         lastSyncedAt: FieldValue.serverTimestamp(),
       });
+
+      await logActivity("task_approved",
+        `Task "${finalTitle}" approved for meeting "${meetingTitle}"`,
+        { meetingId, userId: assigneeUid }
+      );
 
       logger.info(
         `taskCreator: created tasks for proposal ${taskId} in meeting ${meetingId} ` +

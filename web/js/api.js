@@ -171,6 +171,60 @@ export const api = {
   /** Permanently deletes a user. Admin only. */
   deleteUser: (uid) => request("DELETE", `/admin/users/${encodeURIComponent(uid)}`),
 
+  // ── Admin: Dashboard, Activity, Meetings ─────────────────────────────────
+  /** Returns summary stats + integration health for the admin dashboard. Admin only. */
+  getDashboard: () => request("GET", "/admin/dashboard"),
+
+  /** Returns the most recent activity log entries. Admin only. */
+  getActivity: (limit = 20) => request("GET", `/admin/activity?limit=${limit}`),
+
+  /** Returns paginated processed meetings. Admin only. */
+  getMeetings: (params = {}) => {
+    const qs = new URLSearchParams();
+    if (params.status) qs.set("status", params.status);
+    if (params.cursor) qs.set("cursor", params.cursor);
+    if (params.limit) qs.set("limit", String(params.limit));
+    const q = qs.toString();
+    return request("GET", `/admin/meetings${q ? "?" + q : ""}`);
+  },
+
+  /** Reprocesses a failed or awaiting_configuration meeting. Admin only. */
+  reprocessMeeting: (meetingId) => request("POST", `/admin/meetings/${encodeURIComponent(meetingId)}/reprocess`),
+
+  /** Returns proposals for a specific meeting. Admin only. */
+  getProposalsForMeeting: (meetingId) => request("GET", `/admin/meetings/${encodeURIComponent(meetingId)}/proposals`),
+
+  // ── Admin: Setup Wizard ───────────────────────────────────────────────────
+  /** Returns setup wizard state: { completed, completedAt, steps }. Admin only. */
+  getSetupStatus: () => request("GET", "/admin/setup-status"),
+
+  /** Marks the setup wizard as completed. Admin only. */
+  completeSetup: () => request("POST", "/admin/setup-complete"),
+
+  // ── Admin: Export ─────────────────────────────────────────────────────────
+  /**
+   * Exports all Firestore data as a JSON file download.
+   * Encrypted secrets are excluded. Admin only.
+   */
+  exportData: async () => {
+    const headers = await (async () => {
+      const user = auth.currentUser;
+      if (!user) throw new Error("Not signed in");
+      const token = await user.getIdToken();
+      return { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" };
+    })();
+    const res = await fetch("/api/admin/export", { method: "POST", headers });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(err.error || `Export failed (${res.status})`);
+    }
+    return res; // Caller receives raw Response to handle the Blob download
+  },
+
+  // ── Transcripts status (dashboard banner) ────────────────────────────────
+  /** Returns { count } of transcripts stuck in awaiting_configuration. */
+  getAwaitingCount: () => request("GET", "/transcripts/awaiting"),
+
   // ── Token-based auth (email link, no Firebase auth needed yet) ───────────
   validateToken: async (token) => {
     const res = await fetch("/api/auth/validate-token", {

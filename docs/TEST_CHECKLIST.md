@@ -322,6 +322,92 @@ Each item references the relevant component so you know where to look if it fail
 
 ---
 
+---
+
+## 19. Phase 3 — Admin Panel & Production Hardening
+
+### Role Bootstrap
+- [ ] First user to sign up gets `role: "admin"` in Firestore
+- [ ] Second user gets `role: "user"`
+- [ ] Non-admin cannot access `/admin` page (redirected or denied)
+- [ ] Non-admin gets `403` on all `/api/admin/*` endpoints
+
+### Setup Wizard
+- [ ] Fresh deployment (no `config/secrets`) → admin sees setup wizard on first `/admin` visit
+- [ ] Wizard Step 1: AI key saves correctly; test connection passes
+- [ ] Wizard Step 2: Slack bot token saves correctly (or skip)
+- [ ] Wizard Step 3: Org defaults save correctly (or skip)
+- [ ] Wizard Step 4: Invite email sends (or skip)
+- [ ] Clicking "Finish Setup" marks `config/setup.completed = true`; reloads to full admin panel
+- [ ] Subsequent `/admin` visits skip the wizard
+
+### Credentials & Integration Settings (Admin Panel → Settings tab)
+- [ ] Admin can enter and save AI credentials (provider + API key) via Admin Panel
+- [ ] Masked value (`••••••••`) shown after saving; raw key is never displayed
+- [ ] "Test AI" button returns `{ status: "ok" }` for a valid key
+- [ ] Admin can enter and save Slack bot token + signing secret
+- [ ] Admin can enter and save Asana client ID + secret
+- [ ] "Test All Credentials" button tests all three integrations and shows results
+- [ ] `GET /api/admin/secrets` never returns actual secret values (only masked)
+- [ ] Credentials are stored encrypted in Firestore (verify `config/secrets` in Firestore console — values are ciphertext)
+- [ ] Rate limiting: sending >10 requests/min to admin endpoints returns `429`
+
+### Org Defaults (Admin Panel → Settings tab)
+- [ ] Admin can set default notification channel, task destination, expiry, auto-approve
+- [ ] Changes persist across page refreshes
+- [ ] Users without personal preferences inherit org defaults
+
+### User Management (Admin Panel → Users tab)
+- [ ] User list shows all registered users with correct badges
+- [ ] Search filters users by name/email
+- [ ] Role filter shows only admins or only users
+- [ ] Status filter shows only active or inactive
+- [ ] Admin can promote a user to admin
+- [ ] Admin can demote an admin to user — blocked when they are the **last** admin
+- [ ] Admin cannot change their own role
+- [ ] Admin can deactivate/activate a user
+- [ ] Bulk activate/deactivate works for multiple selected users
+- [ ] Invite modal sends invite email and stores invite in Firestore `invites/`
+- [ ] Invited user signs in → `invites/{email}.accepted = true`
+
+### Dashboard (Admin Panel → Dashboard tab)
+- [ ] Summary cards show correct user/meeting/task counts
+- [ ] AI cost estimate is non-zero after processing a transcript
+- [ ] Activity feed shows recent events (meeting_processed, user_joined, etc.)
+- [ ] System health panel shows correct configured/not_configured status per integration
+
+### Meetings (Admin Panel → Meetings tab)
+- [ ] All processed meetings appear in the list
+- [ ] Status badge (proposed, failed, awaiting_configuration) is accurate
+- [ ] Expanding a meeting row shows its proposals
+- [ ] "Reprocess" button works for `failed` or `awaiting_configuration` meetings
+- [ ] After reprocess, meeting re-enters the pipeline (status → pending → processing → …)
+
+### Error Handling — Missing Configuration
+- [ ] Upload a transcript when no AI key is configured → `processedTranscripts.status = "awaiting_configuration"` (not "failed")
+- [ ] Error message reads: "AI provider not configured. An admin needs to set up AI credentials…"
+- [ ] Dashboard shows `awaiting-banner` informing users that a meeting is waiting for configuration
+- [ ] After admin configures AI key, admin can reprocess from Meetings tab → pipeline completes
+- [ ] Slack not configured → user who selects Slack notification channel sees warning banner in Settings
+- [ ] Asana not configured → Asana section in Settings is greyed out with explanation message
+
+### Export & Recovery
+- [ ] "Export Data" button downloads a valid JSON file
+- [ ] Exported JSON contains users, meetings, proposals, activity log
+- [ ] Exported JSON does NOT contain any encrypted secret values
+- [ ] Firebase Hosting rollback: `firebase hosting:rollback` restores previous version
+
+### Security
+- [ ] `config/secrets` Firestore rule denies direct client read (test via browser devtools)
+- [ ] `config/setup` Firestore rule denies direct client read
+- [ ] `activityLog/*` Firestore rule denies direct client read
+- [ ] `users/{uid}/tokens/*` Firestore rule denies direct client read
+- [ ] No secret values appear in Cloud Function logs (check GCP Logging for "apiKey", "secret", "token")
+- [ ] CORS restricted: direct POST to function URL from a foreign origin returns `403`
+- [ ] Credentials are never returned in plain text by any API endpoint
+
+---
+
 ## Notes
 
 - If a step fails, check function logs first: Emulator UI → Logs tab → filter by function name

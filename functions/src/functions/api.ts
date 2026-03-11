@@ -10,6 +10,7 @@ import { ProposalDocument } from "../models/proposal";
 import { UserPreferences, UserDocument, normalizeNotifyVia, normalizeTaskDestination } from "../models/user";
 import { routeNotification } from "../services/notifications/notificationRouter";
 import { requireAuth as authenticate, requireAdmin, AuthRequest } from "../middleware/auth";
+import { adminRateLimit } from "../middleware/adminRateLimit";
 import { adminRouter } from "./adminApi";
 
 const APP_URL = () => process.env.APP_URL ?? "https://taskbot-fb10d.web.app";
@@ -1194,11 +1195,54 @@ app.patch("/config/org-defaults", authenticate, requireAdmin, async (req: Reques
   res.json({ success: true });
 });
 
+// ─── GET /transcripts/awaiting ────────────────────────────────────────────────
+// Returns whether any transcripts relevant to the current user are stuck in
+// "awaiting_configuration" state. Used by the dashboard to show a banner.
+
+app.get("/transcripts/awaiting", authenticate, async (req: Request, res: Response) => {
+  const uid = (req as AuthRequest).uid;
+  const user = await getUser(uid);
+  if (!user) {
+    res.json({ count: 0 });
+    return;
+  }
+
+  const [byUidSnap, byEmailSnap] = await Promise.all([
+    db().collection("processedTranscripts")
+      .where("status", "==", "awaiting_configuration")
+      .where("detectedByUid", "==", uid)
+      .limit(5)
+      .get(),
+    user.email
+      ? db().collection("processedTranscripts")
+          .where("status", "==", "awaiting_configuration")
+          .where("attendeeEmails", "array-contains", user.email)
+          .limit(5)
+          .get()
+      : Promise.resolve(null),
+  ]);
+
+  // Deduplicate by meeting ID
+  const ids = new Set<string>();
+  for (const d of byUidSnap.docs) ids.add(d.id);
+  if (byEmailSnap) for (const d of byEmailSnap.docs) ids.add(d.id);
+
+  res.json({ count: ids.size });
+});
+
 // ─── Admin Routes ─────────────────────────────────────────────────────────────
 // All routes under /admin/* require authentication + admin role.
 
-app.use("/admin", authenticate, requireAdmin, adminRouter);
+app.use("/admin", authenticate, requireAdmin, adminRateLimit, adminRouter);
 
 // ─── Export ───────────────────────────────────────────────────────────────────
 
-export const api = onRequest({ region: "us-central1", cors: true }, app);
+// Restrict CORS to the hosting domain. During local dev, also allow localhost.
+// Direct calls to the function URL from other origins are rejected.
+const ALLOWED_ORIGINS = [
+  process.env.APP_URL ?? "https://taskbot-fb10d.web.app",
+  "http://localhost:3000",
+  "http://127.0.0.1:3000",
+];
+
+export const api = onRequest({ region: "us-central1", cors: ALLOWED_ORIGINS }, app);
