@@ -7,7 +7,7 @@ import {
   where,
   onSnapshot,
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
-import { requireAuth, signOutUser, showToast, initAdminNav } from "./auth.js";
+import { requireAuth, signOutUser, showToast, initAdminNav, getUserRole } from "./auth.js";
 import { api } from "./api.js";
 
 // ── Auth guard ────────────────────────────────────────────────────────────────
@@ -19,11 +19,18 @@ document.getElementById("user-chip").textContent = user.displayName || user.emai
 document.getElementById("logout-btn").addEventListener("click", () => signOutUser());
 initAdminNav();
 
+const currentRole = await getUserRole();
+const isPrivileged = currentRole === "admin" || currentRole === "project_manager";
+
 // ── State ─────────────────────────────────────────────────────────────────────
 
 let allTasks = [];    // confirmed task state (from last save or initial load)
 let meetingMeta = {}; // { meetingId: { meetingTitle, driveFileLink } }
 let activeUsers = [];
+
+// For PM/admin: current view mode
+// "own" = own tasks, "all" = all tasks, or a uid string = specific user
+let viewMode = "own";
 
 // Draft mode
 // pendingChanges: Map<taskId, { meetingId, fromStatus, toStatus }>
@@ -48,6 +55,25 @@ const discardBtn     = document.getElementById("discard-btn");
 const syncLastLabel  = document.getElementById("sync-last-label");
 const syncErrorBadge = document.getElementById("sync-error-badge");
 const syncNowBtn     = document.getElementById("sync-now-btn");
+
+// ── View-as selector (PM/admin only) ──────────────────────────────────────────
+
+let viewAsSelect = null;
+
+if (isPrivileged) {
+  viewAsSelect = document.createElement("select");
+  viewAsSelect.id = "view-as-select";
+  viewAsSelect.style.cssText = "font-size:13px;padding:5px 8px;border:1px solid #d1d5db;border-radius:6px;";
+  viewAsSelect.innerHTML = `
+    <option value="own">My Tasks</option>
+    <option value="all">All Tasks</option>
+  `;
+  viewAsSelect.addEventListener("change", async () => {
+    viewMode = viewAsSelect.value;
+    await reloadTasks();
+  });
+  toolbar.insertBefore(viewAsSelect, toolbar.firstChild);
+}
 
 const cols = {
   created:     document.getElementById("col-pending"),
@@ -388,7 +414,7 @@ function buildCard(task) {
       ${duePart}
     </div>
     <div class="task-footer">
-      <span class="assignee-label">${escHtml(task.assigneeEmail ?? "")}</span>
+      <span class="assignee-label">${escHtml(viewMode !== "own" && task.assigneeName ? task.assigneeName + " · " + (task.assigneeEmail ?? "") : (task.assigneeEmail ?? ""))}</span>
       <div class="task-actions">
         ${actionBtn}
         <button class="btn-icon edit-btn">✏ Edit</button>
@@ -564,14 +590,27 @@ async function showReassignUI(card, task) {
 
 // ── Firestore real-time listener ──────────────────────────────────────────────
 
+let currentUnsubscribe = null;
+
 function subscribeToTasks() {
+  // Unsubscribe from any previous listener
+  if (currentUnsubscribe) { currentUnsubscribe(); currentUnsubscribe = null; }
+
+  // For PM/admin viewing all tasks, use the API (no single-uid filter possible).
+  // For own tasks, use a real-time Firestore listener.
+  if (isPrivileged && viewMode !== "own") {
+    // No real-time listener for all-tasks view — polling would be too expensive.
+    // Tasks were already fetched via reloadTasks(); return a no-op.
+    return;
+  }
+
   const q = query(
     collectionGroup(db, "tasks"),
     where("assigneeUid", "==", user.uid),
     where("status", "in", ["created", "in_progress", "completed"])
   );
 
-  return onSnapshot(q, async (snap) => {
+  currentUnsubscribe = onSnapshot(q, async (snap) => {
     const tasks = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 
     // Fetch missing meeting meta
@@ -590,7 +629,6 @@ function subscribeToTasks() {
     }
 
     if (isDraftMode) {
-      // Buffer the update — don't disrupt the draft
       bufferedTasks = tasks;
       return;
     }
@@ -598,6 +636,8 @@ function subscribeToTasks() {
     allTasks = tasks;
     render();
   });
+
+  return currentUnsubscribe;
 }
 
 // ── Meeting filter population ─────────────────────────────────────────────────
@@ -631,24 +671,50 @@ function formatDate(iso) {
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 
-async function init() {
+async function reloadTasks() {
   try {
-    const { tasks: initialTasks } = await api.getTasks();
-    initialTasks.forEach((t) => {
+    const params = {};
+    if (isPrivileged && viewMode === "all") {
+      params.viewAll = true;
+    } else if (isPrivileged && viewMode !== "own" && viewMode !== "all") {
+      // viewMode is a uid
+      params.userId = viewMode;
+    }
+    const { tasks: fetchedTasks } = await api.getTasks(params);
+    fetchedTasks.forEach((t) => {
       meetingMeta[t.meetingId] = { meetingTitle: t.meetingTitle, driveFileLink: t.driveFileLink };
     });
-    allTasks = initialTasks;
+    allTasks = fetchedTasks;
   } catch (err) {
     showToast("Failed to load tasks: " + err.message, "error");
   }
+  populateMeetingFilter();
+  render();
+  subscribeToTasks();
+}
+
+async function init() {
+  await reloadTasks();
 
   loadingEl.hidden = true;
   boardWrap.hidden = false;
 
-  populateMeetingFilter();
-  render();
+  // Populate user list in view-as dropdown for PM/admin
+  if (isPrivileged && viewAsSelect) {
+    try {
+      const { users } = await api.getActiveUsers();
+      activeUsers = users;
+      for (const u of users) {
+        if (u.uid === user.uid) continue; // already have "My Tasks"
+        const opt = document.createElement("option");
+        opt.value = u.uid;
+        opt.textContent = u.displayName || u.email;
+        viewAsSelect.appendChild(opt);
+      }
+    } catch (_) { /* non-fatal */ }
+  }
+
   initSortable();
-  subscribeToTasks();
 }
 
 [searchInput, filterMeeting, filterDest, sortBy].forEach((el) => {

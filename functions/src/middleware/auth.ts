@@ -52,3 +52,23 @@ export async function requireAdmin(
   }
   next();
 }
+
+/**
+ * Express middleware: verifies the current user has role "admin" OR "project_manager".
+ * Must be used AFTER `requireAuth` (relies on `req.uid` being set).
+ *
+ * Returns 403 if the user is not found or their role is not "admin" or "project_manager".
+ */
+export async function requireProjectManager(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  const uid = (req as AuthRequest).uid;
+  const user = await getUser(uid);
+  if (!user || (user.role !== "admin" && user.role !== "project_manager")) {
+    res.status(403).json({ error: "Project manager access required" });
+    return;
+  }
+  next();
+}

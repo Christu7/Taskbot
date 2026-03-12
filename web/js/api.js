@@ -92,8 +92,15 @@ export const api = {
   disconnectSlack: () => request("DELETE", "/settings/slack"),
 
   // ── Tasks ─────────────────────────────────────────────────────────────────
-  /** Returns active tasks (created, in_progress, completed) for the user. */
-  getTasks: () => request("GET", "/tasks"),
+  /** Returns active tasks (created, in_progress, completed) for the user.
+   *  For PM/admin, accepts optional params: { viewAll: true } or { userId: uid }. */
+  getTasks: (params = {}) => {
+    const qs = new URLSearchParams();
+    if (params.viewAll) qs.set("viewAll", "true");
+    if (params.userId) qs.set("userId", params.userId);
+    const q = qs.toString();
+    return request("GET", `/tasks${q ? "?" + q : ""}`);
+  },
 
   /** Updates title, description, dueDate, status, or assigneeUid for a task. */
   updateTask: (meetingId, taskId, body) =>

@@ -9,9 +9,9 @@ import { getUser, updateUser } from "../services/firestore";
 import { ProposalDocument } from "../models/proposal";
 import { UserPreferences, UserDocument, normalizeNotifyVia, normalizeTaskDestination } from "../models/user";
 import { routeNotification } from "../services/notifications/notificationRouter";
-import { requireAuth as authenticate, requireAdmin, AuthRequest } from "../middleware/auth";
+import { requireAuth as authenticate, requireAdmin, requireProjectManager, AuthRequest } from "../middleware/auth";
 import { adminRateLimit } from "../middleware/adminRateLimit";
-import { adminRouter } from "./adminApi";
+import { adminRouter, adminPmRouter } from "./adminApi";
 
 const APP_URL = () => process.env.APP_URL ?? "https://taskbot-fb10d.web.app";
 
@@ -110,12 +110,23 @@ app.post("/auth/validate-token", async (req: Request, res: Response) => {
 
 app.get("/proposals/pending", authenticate, async (req: Request, res: Response) => {
   const uid = (req as AuthRequest).uid;
+  const userDoc = await getUser(uid);
+  const isPrivileged = userDoc?.role === "admin" || userDoc?.role === "project_manager";
 
-  const snap = await db().collectionGroup("tasks")
-    .where("assigneeUid", "==", uid)
-    .where("status", "==", "pending")
-    .orderBy("createdAt", "desc")
-    .get();
+  // PM/admin can see all pending proposals; users see only their own
+  let snap;
+  if (isPrivileged) {
+    snap = await db().collectionGroup("tasks")
+      .where("status", "==", "pending")
+      .orderBy("createdAt", "desc")
+      .get();
+  } else {
+    snap = await db().collectionGroup("tasks")
+      .where("assigneeUid", "==", uid)
+      .where("status", "==", "pending")
+      .orderBy("createdAt", "desc")
+      .get();
+  }
 
   // Group by meetingId
   const grouped: Record<string, {
@@ -135,7 +146,7 @@ app.get("/proposals/pending", authenticate, async (req: Request, res: Response) 
         proposals: [],
       };
     }
-    grouped[data.meetingId].proposals.push({ id: docSnap.id, ...data });
+    grouped[data.meetingId].proposals.push({ id: docSnap.id, ...data, isOwner: data.assigneeUid === uid });
   }
 
   // Enrich with meeting titles and Drive links from processedTranscripts
@@ -217,7 +228,9 @@ app.get(
       return;
     }
 
-    if (snap.data()?.assigneeUid !== uid) {
+    const callerDoc = await getUser(uid);
+    const isPrivileged = callerDoc?.role === "admin" || callerDoc?.role === "project_manager";
+    if (!isPrivileged && snap.data()?.assigneeUid !== uid) {
       res.status(403).json({ error: "Forbidden" });
       return;
     }
@@ -307,7 +320,9 @@ app.patch(
       return;
     }
 
-    if (snap.data()?.assigneeUid !== uid) {
+    const callerDoc = await getUser(uid);
+    const isPrivileged = callerDoc?.role === "admin" || callerDoc?.role === "project_manager";
+    if (!isPrivileged && snap.data()?.assigneeUid !== uid) {
       res.status(403).json({ error: "Forbidden" });
       return;
     }
@@ -769,15 +784,35 @@ app.get("/settings/slack", authenticate, async (req: Request, res: Response) => 
 // ─── GET /tasks ───────────────────────────────────────────────────────────────
 // Returns all active tasks (created, in_progress, completed) for the user.
 // Enriched with meetingTitle and driveFileLink from processedTranscripts.
+// For admins/project_managers: returns ALL tasks across all users.
+//   Optional ?userId= filters to a specific user's tasks.
+//   Optional ?viewAll=true returns all tasks (default for PM/admin when no userId provided).
 
 app.get("/tasks", authenticate, async (req: Request, res: Response) => {
   const uid = (req as AuthRequest).uid;
+  const userDoc = await getUser(uid);
+  const isPrivileged = userDoc?.role === "admin" || userDoc?.role === "project_manager";
 
-  const snap = await db().collectionGroup("tasks")
-    .where("assigneeUid", "==", uid)
-    .where("status", "in", ["created", "in_progress", "completed"])
-    .orderBy("createdAt", "desc")
-    .get();
+  const userIdFilter = req.query.userId as string | undefined;
+  const viewAll = req.query.viewAll === "true";
+
+  let snap;
+  if (isPrivileged && (viewAll || userIdFilter)) {
+    // PM/admin viewing all tasks or filtering by a specific user
+    let q = db().collectionGroup("tasks")
+      .where("status", "in", ["created", "in_progress", "completed"]);
+    if (userIdFilter) {
+      q = q.where("assigneeUid", "==", userIdFilter);
+    }
+    snap = await q.orderBy("createdAt", "desc").get();
+  } else {
+    // Regular user (or PM/admin viewing their own tasks)
+    snap = await db().collectionGroup("tasks")
+      .where("assigneeUid", "==", uid)
+      .where("status", "in", ["created", "in_progress", "completed"])
+      .orderBy("createdAt", "desc")
+      .get();
+  }
 
   // Collect unique meetingIds and fetch titles in one batch
   const meetingIds = [...new Set(snap.docs.map((d) => d.data().meetingId as string))];
@@ -803,7 +838,7 @@ app.get("/tasks", authenticate, async (req: Request, res: Response) => {
     };
   });
 
-  res.json({ tasks });
+  res.json({ tasks, isPrivileged });
 });
 
 // ─── PATCH /tasks/:meetingId/:taskId ──────────────────────────────────────────
@@ -839,7 +874,9 @@ app.patch(
       return;
     }
 
-    if (snap.data()?.assigneeUid !== uid) {
+    const callerDoc = await getUser(uid);
+    const isPrivileged = callerDoc?.role === "admin" || callerDoc?.role === "project_manager";
+    if (!isPrivileged && snap.data()?.assigneeUid !== uid) {
       res.status(403).json({ error: "Forbidden" });
       return;
     }
@@ -901,7 +938,13 @@ app.post(
     const snap = await docRef.get();
 
     if (!snap.exists) { res.status(404).json({ error: "Task not found" }); return; }
-    if (snap.data()?.assigneeUid !== uid) { res.status(403).json({ error: "Forbidden" }); return; }
+
+    const callerDoc = await getUser(uid);
+    const isPrivileged = callerDoc?.role === "admin" || callerDoc?.role === "project_manager";
+    if (!isPrivileged && snap.data()?.assigneeUid !== uid) {
+      res.status(403).json({ error: "Forbidden" });
+      return;
+    }
 
     const task = snap.data() as ProposalDocument;
     await docRef.update({
@@ -913,8 +956,9 @@ app.post(
 
     if (task.externalRefs?.length) {
       try {
-        const accessToken = await getValidAccessToken(uid);
-        await completeExternalRefs(uid, task.externalRefs, accessToken);
+        const taskOwnerUid = task.assigneeUid ?? uid;
+        const accessToken = await getValidAccessToken(taskOwnerUid);
+        await completeExternalRefs(taskOwnerUid, task.externalRefs, accessToken);
       } catch (err) {
         logger.warn(`tasks complete: external complete failed for ${taskId}`, err);
       }
@@ -1073,7 +1117,9 @@ app.post(
     if (!snap.exists) { res.status(404).json({ error: "Proposal not found" }); return; }
 
     const proposal = snap.data() as ProposalDocument;
-    if (proposal.assigneeUid !== uid) { res.status(403).json({ error: "Forbidden" }); return; }
+    const callerDoc = await getUser(uid);
+    const isPrivileged = callerDoc?.role === "admin" || callerDoc?.role === "project_manager";
+    if (!isPrivileged && proposal.assigneeUid !== uid) { res.status(403).json({ error: "Forbidden" }); return; }
     if (proposal.status !== "pending") {
       res.status(409).json({ error: "Only pending proposals can be reassigned" });
       return;
@@ -1231,8 +1277,10 @@ app.get("/transcripts/awaiting", authenticate, async (req: Request, res: Respons
 });
 
 // ─── Admin Routes ─────────────────────────────────────────────────────────────
-// All routes under /admin/* require authentication + admin role.
+// PM-accessible routes (project_manager OR admin): read-only data + reprocess.
+app.use("/admin", authenticate, requireProjectManager, adminRateLimit, adminPmRouter);
 
+// Admin-only routes (credentials, user roles, org settings, export).
 app.use("/admin", authenticate, requireAdmin, adminRateLimit, adminRouter);
 
 // ─── Export ───────────────────────────────────────────────────────────────────

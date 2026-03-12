@@ -98,10 +98,12 @@ export interface UserDocument {
   /**
    * Role-based access level.
    * - "admin": can manage org settings, users, and credentials via the admin panel.
+   * - "project_manager": can view and edit all tasks across all users, but cannot
+   *   manage system configuration (credentials, user roles, org settings).
    * - "user": default role; can only manage their own tasks and preferences.
    * The first user to sign up is automatically assigned "admin".
    */
-  role: "admin" | "user";
+  role: "admin" | "project_manager" | "user";
   /** UID of the admin who last changed this user's role. */
   promotedBy?: string;
   /** When the role was last changed. */

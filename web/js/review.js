@@ -1,4 +1,4 @@
-import { auth, signInWithCustomToken, waitForAuthReady, signOutUser, showToast, initAdminNav } from "./auth.js";
+import { auth, signInWithCustomToken, waitForAuthReady, signOutUser, showToast, initAdminNav, getUserRole } from "./auth.js";
 import { api } from "./api.js";
 
 const loadingEl      = document.getElementById("loading");
@@ -22,8 +22,9 @@ const tokenParam   = params.get("token");
 const meetingParam = params.get("meetingId");
 
 let currentMeetingId = null;
-let ownProposals     = [];   // proposals where isOwner === true
+let ownProposals     = [];   // proposals where isOwner === true (or PM/admin acting on all)
 let activeUsers      = [];   // for reassign dropdown
+let isPrivilegedUser = false; // true if admin or project_manager
 
 // ─── Boot ─────────────────────────────────────────────────────────────────────
 
@@ -73,6 +74,10 @@ async function bootFromAuth(meetingId) {
   setupHeader(user);
   currentMeetingId = meetingId;
 
+  // Check role — PM/admin can act on all proposals
+  const role = await getUserRole();
+  isPrivilegedUser = role === "admin" || role === "project_manager";
+
   try {
     const result = await api.getMeetingProposals(meetingId);
     renderPage(result.meetingTitle, result.driveFileLink, result.proposals);
@@ -104,8 +109,14 @@ function renderPage(meetingTitle, driveFileLink, allProposals) {
   }
 
   // Split own vs others — server already sorted by confidence (high→medium→low)
-  ownProposals = (allProposals || []).filter((p) => p.isOwner);
-  const others = (allProposals || []).filter((p) => !p.isOwner);
+  // PM/admin: treat ALL proposals as "own" (editable)
+  const allProposalsList = allProposals || [];
+  if (isPrivilegedUser) {
+    ownProposals = allProposalsList;
+  } else {
+    ownProposals = allProposalsList.filter((p) => p.isOwner);
+  }
+  const others = isPrivilegedUser ? [] : allProposalsList.filter((p) => !p.isOwner);
 
   if (ownProposals.length === 0 && others.length === 0) {
     emptyEl.hidden = false;
@@ -113,7 +124,7 @@ function renderPage(meetingTitle, driveFileLink, allProposals) {
     return;
   }
 
-  // Render own proposals
+  // Render own proposals (or all proposals for PM/admin)
   if (ownProposals.length === 0) {
     document.getElementById("bulk-actions").hidden = true;
   } else {
@@ -121,7 +132,7 @@ function renderPage(meetingTitle, driveFileLink, allProposals) {
     updateBulkActions();
   }
 
-  // Render other-tasks section
+  // Render other-tasks section (regular users only)
   if (others.length > 0) {
     otherSection.hidden = false;
     otherCount.textContent = `(${others.length})`;

@@ -12,18 +12,22 @@ import { getValidAccessToken } from "../auth";
 import { sendInviteEmail } from "../services/emailSender";
 import { logActivity } from "../services/activityLogger";
 
+// pmRouter: routes accessible to project_manager OR admin
+const pmRouter = Router();
+// router: admin-only routes
 const router = Router();
 const db = () => admin.firestore();
 
 const APP_URL = process.env.APP_URL ?? "https://taskbot-fb10d.web.app";
 
 // ─── GET /admin/users ─────────────────────────────────────────────────────────
-// Returns an enriched summary list of all registered users. Admin only.
-// Accepts query params: ?search=, ?role=admin|user, ?status=active|inactive
+// Returns an enriched summary list of all registered users. Admin + PM.
+// Accepts query params: ?search=, ?role=admin|project_manager|user, ?status=active|inactive
 
-router.get("/users", async (req: Request, res: Response) => {
+pmRouter.get("/users", async (req: Request, res: Response) => {
   const { search, role, status } = req.query as Record<string, string | undefined>;
 
+  try {
   const snap = await db().collection("users").orderBy("createdAt", "asc").get();
 
   // Fetch asana token existence for all users in parallel
@@ -73,7 +77,7 @@ router.get("/users", async (req: Request, res: Response) => {
         (u.email ?? "").toLowerCase().includes(q)
     );
   }
-  if (role === "admin" || role === "user") {
+  if (role === "admin" || role === "project_manager" || role === "user") {
     users = users.filter((u) => u.role === role);
   }
   if (status === "active") {
@@ -83,12 +87,16 @@ router.get("/users", async (req: Request, res: Response) => {
   }
 
   res.json({ users });
+  } catch (err) {
+    logger.error("adminApi GET /users failed", err);
+    res.status(500).json({ error: (err as Error).message });
+  }
 });
 
 // ─── GET /admin/users/stats ───────────────────────────────────────────────────
 // Returns aggregate user statistics. Must be registered BEFORE /:uid routes.
 
-router.get("/users/stats", async (_req: Request, res: Response) => {
+pmRouter.get("/users/stats", async (_req: Request, res: Response) => {
   const snap = await db().collection("users").get();
   const users = snap.docs.map((d) => d.data() as UserDocument);
 
@@ -125,8 +133,8 @@ router.patch("/users/:uid/role", async (req: Request, res: Response) => {
     return;
   }
 
-  if (role !== "admin" && role !== "user") {
-    res.status(400).json({ error: "role must be \"admin\" or \"user\"" });
+  if (role !== "admin" && role !== "project_manager" && role !== "user") {
+    res.status(400).json({ error: "role must be \"admin\", \"project_manager\", or \"user\"" });
     return;
   }
 
@@ -137,7 +145,7 @@ router.patch("/users/:uid/role", async (req: Request, res: Response) => {
   }
 
   // Prevent demoting the last admin
-  if (role === "user" && target.role === "admin") {
+  if ((role === "user" || role === "project_manager") && target.role === "admin") {
     const adminsSnap = await db().collection("users").where("role", "==", "admin").get();
     if (adminsSnap.size <= 1) {
       res.status(400).json({ error: "Cannot demote the last admin. Promote another user first." });
@@ -443,7 +451,8 @@ router.post("/secrets/test", async (_req: Request, res: Response) => {
 
 // ─── GET /admin/dashboard ─────────────────────────────────────────────────────
 
-router.get("/dashboard", async (_req: Request, res: Response) => {
+pmRouter.get("/dashboard", async (_req: Request, res: Response) => {
+  try {
   const now = Date.now();
   const weekAgo = new Date(now - 7 * 24 * 60 * 60 * 1000);
   const monthAgo = new Date(now - 30 * 24 * 60 * 60 * 1000);
@@ -525,11 +534,15 @@ router.get("/dashboard", async (_req: Request, res: Response) => {
     },
     integrations,
   });
+  } catch (err) {
+    logger.error("adminApi GET /dashboard failed", err);
+    res.status(500).json({ error: (err as Error).message });
+  }
 });
 
 // ─── GET /admin/activity ──────────────────────────────────────────────────────
 
-router.get("/activity", async (req: Request, res: Response) => {
+pmRouter.get("/activity", async (req: Request, res: Response) => {
   const limit = Math.min(parseInt((req.query.limit as string) ?? "20", 10), 100);
 
   const snap = await db().collection("activityLog")
@@ -548,7 +561,7 @@ router.get("/activity", async (req: Request, res: Response) => {
 
 // ─── GET /admin/meetings ──────────────────────────────────────────────────────
 
-router.get("/meetings", async (req: Request, res: Response) => {
+pmRouter.get("/meetings", async (req: Request, res: Response) => {
   const limit = Math.min(parseInt((req.query.limit as string) ?? "50", 10), 200);
   const status = req.query.status as string | undefined;
   const cursor = req.query.cursor as string | undefined;
@@ -606,7 +619,7 @@ router.get("/meetings", async (req: Request, res: Response) => {
 
 // ─── GET /admin/meetings/:meetingId/proposals ─────────────────────────────────
 
-router.get("/meetings/:meetingId/proposals", async (req: Request, res: Response) => {
+pmRouter.get("/meetings/:meetingId/proposals", async (req: Request, res: Response) => {
   const { meetingId } = req.params;
   const snap = await db()
     .collection("proposals").doc(meetingId)
@@ -634,7 +647,7 @@ router.get("/meetings/:meetingId/proposals", async (req: Request, res: Response)
 
 // ─── POST /admin/meetings/:meetingId/reprocess ────────────────────────────────
 
-router.post("/meetings/:meetingId/reprocess", async (req: Request, res: Response) => {
+pmRouter.post("/meetings/:meetingId/reprocess", async (req: Request, res: Response) => {
   const adminUid = (req as AuthRequest).uid;
   const { meetingId } = req.params;
 
@@ -689,7 +702,7 @@ router.post("/meetings/:meetingId/reprocess", async (req: Request, res: Response
 // Returns the current onboarding setup state.
 // Used by the admin panel to show/hide the setup wizard.
 
-router.get("/setup-status", async (_req: Request, res: Response) => {
+pmRouter.get("/setup-status", async (_req: Request, res: Response) => {
   const [setupSnap, secretsSnap] = await Promise.all([
     db().doc("config/setup").get(),
     db().doc("config/secrets").get(),
@@ -790,4 +803,4 @@ router.post("/export", async (req: Request, res: Response) => {
   res.json(exportData);
 });
 
-export { router as adminRouter };
+export { router as adminRouter, pmRouter as adminPmRouter };

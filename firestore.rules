@@ -17,6 +17,11 @@ service cloud.firestore {
           && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "admin";
     }
 
+    function isProjectManagerOrAdmin() {
+      return isSignedIn()
+          && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ["admin", "project_manager"];
+    }
+
     // ── Users ────────────────────────────────────────────────────────────────
     // User profile documents — readable/writable only by that user.
     // The `role` field is immutable from the client: users cannot promote
@@ -64,22 +69,27 @@ service cloud.firestore {
     match /proposals/{meetingId}/tasks/{taskId} {
       allow read: if isSignedIn() && (
         resource.data.assigneeUid == request.auth.uid ||
+        isProjectManagerOrAdmin() ||
         (request.auth.token.email != null &&
          request.auth.token.email in
            get(/databases/$(database)/documents/processedTranscripts/$(meetingId)).data.attendeeEmails)
       );
-      allow update: if isSignedIn()
-                    && resource.data.assigneeUid == request.auth.uid;
+      allow update: if isSignedIn() && (
+        resource.data.assigneeUid == request.auth.uid ||
+        isProjectManagerOrAdmin()
+      );
     }
 
     // ── Proposal collection group query support ───────────────────────────────
     // The approval dashboard uses a collectionGroup("tasks") query filtered by
     // assigneeUid. Firestore requires a recursive-wildcard rule to authorise
     // collection group queries — path-specific rules alone are not sufficient.
-    // This covers the dashboard and Kanban board (own tasks only).
+    // This covers the dashboard and Kanban board (own tasks only, or all for PM/admin).
     match /{path=**}/tasks/{taskId} {
-      allow read, update: if isSignedIn()
-                          && resource.data.assigneeUid == request.auth.uid;
+      allow read, update: if isSignedIn() && (
+        resource.data.assigneeUid == request.auth.uid ||
+        isProjectManagerOrAdmin()
+      );
     }
 
     // ── Config (org defaults) ────────────────────────────────────────────────

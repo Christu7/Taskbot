@@ -58,7 +58,7 @@ export async function requireAuth() {
 }
 
 /**
- * Fetch and cache the current user's role ("admin" | "user").
+ * Fetch and cache the current user's role ("admin" | "project_manager" | "user").
  * Cached in sessionStorage so subsequent calls are instant.
  * Falls back to "user" on any error.
  */
@@ -77,13 +77,13 @@ export async function getUserRole() {
 }
 
 /**
- * Show the Admin nav link if the current user is an admin.
+ * Show the Admin nav link if the current user is an admin or project_manager.
  * Looks for an element with id="admin-link" on the page.
  */
 export async function initAdminNav() {
   const role = await getUserRole();
   const link = document.getElementById("admin-link");
-  if (link && role === "admin") link.hidden = false;
+  if (link && (role === "admin" || role === "project_manager")) link.hidden = false;
 }
 
 /**
@@ -93,6 +93,19 @@ export async function initAdminNav() {
 export async function requireAdminRole() {
   const role = await getUserRole();
   if (role !== "admin") {
+    window.location.href = "/dashboard";
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Guard: redirect users without admin or project_manager role to the dashboard.
+ * Returns true if the user may proceed, false if they were redirected.
+ */
+export async function requireProjectManagerRole() {
+  const role = await getUserRole();
+  if (role !== "admin" && role !== "project_manager") {
     window.location.href = "/dashboard";
     return false;
   }

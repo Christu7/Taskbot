@@ -1,4 +1,4 @@
-import { requireAuth, requireAdminRole, signOutUser, showToast } from "./auth.js";
+import { requireAuth, requireAdminRole, requireProjectManagerRole, getUserRole, signOutUser, showToast } from "./auth.js";
 import { api } from "./api.js";
 
 const loadingEl    = document.getElementById("loading");
@@ -44,6 +44,13 @@ const saveOrgDefaultsBtn    = document.getElementById("save-org-defaults-btn");
 const orgExpiryHours        = document.getElementById("org-expiry-hours");
 const orgAutoApprove        = document.getElementById("org-auto-approve");
 
+// ─── State ─────────────────────────────────────────────────────────────────────
+// Declare module-level state before any top-level awaits to avoid TDZ errors.
+
+let allUsers = [];
+let selectedUids = new Set();
+let meetingsCursor = null;
+
 // ─── Boot ──────────────────────────────────────────────────────────────────────
 
 const user = await requireAuth();
@@ -52,16 +59,35 @@ if (!user) throw new Error("not reached");
 chipEl.textContent = user.displayName || user.email;
 logoutBtn.addEventListener("click", () => signOutUser());
 
-const isAdmin = await requireAdminRole();
-if (!isAdmin) throw new Error("not reached");
+// Allow both admin and project_manager to access the panel
+const canAccess = await requireProjectManagerRole();
+if (!canAccess) throw new Error("not reached");
+
+const currentRole = await getUserRole();
+const isCurrentUserAdmin = currentRole === "admin";
+
+// Hide admin-only tabs for project managers
+if (!isCurrentUserAdmin) {
+  for (const tab of document.querySelectorAll(".admin-tab[data-tab='settings'], .admin-tab[data-tab='users']")) {
+    tab.hidden = true;
+  }
+  // Default to dashboard tab for PMs
+  const dashTab = document.querySelector(".admin-tab[data-tab='dashboard']");
+  if (dashTab) {
+    for (const t of document.querySelectorAll(".admin-tab")) t.classList.remove("active");
+    dashTab.classList.add("active");
+  }
+}
 
 // Check if setup wizard should be shown (first admin, no credentials yet)
 let showWizard = false;
-try {
-  const status = await api.getSetupStatus();
-  showWizard = !status.completed;
-} catch {
-  // Setup status check failed — proceed to normal panel
+if (isCurrentUserAdmin) {
+  try {
+    const status = await api.getSetupStatus();
+    showWizard = !status.completed;
+  } catch {
+    // Setup status check failed — proceed to normal panel
+  }
 }
 
 if (showWizard) {
@@ -69,13 +95,24 @@ if (showWizard) {
   wizardEl.hidden = false;
   initSetupWizard();
 } else {
-  await loadUsers();
-  await loadUserStats();
-  await loadCredentials();
-  await loadOrgDefaults();
+  if (isCurrentUserAdmin) {
+    await loadUsers();
+    await loadUserStats();
+    await loadCredentials();
+    await loadOrgDefaults();
+  }
 
   loadingEl.hidden = true;
   contentEl.hidden = false;
+
+  // PMs default to dashboard tab — load it immediately
+  if (!isCurrentUserAdmin) {
+    for (const pane of document.querySelectorAll(".tab-pane")) pane.hidden = true;
+    const dashPane = document.getElementById("tab-dashboard");
+    if (dashPane) dashPane.hidden = false;
+    await loadDashboard();
+    dashboardLoaded = true;
+  }
 }
 
 // ─── Tab switching ─────────────────────────────────────────────────────────────
@@ -86,6 +123,10 @@ let meetingsLoaded = false;
 for (const tab of document.querySelectorAll(".admin-tab")) {
   tab.addEventListener("click", async () => {
     const target = tab.dataset.tab;
+
+    // Block PM users from accessing admin-only tabs
+    if (!isCurrentUserAdmin && (target === "settings" || target === "users")) return;
+
     for (const t of document.querySelectorAll(".admin-tab")) t.classList.remove("active");
     tab.classList.add("active");
     for (const pane of document.querySelectorAll(".tab-pane")) pane.hidden = true;
@@ -300,8 +341,6 @@ async function loadUserStats() {
 
 // ─── Load & filter users ──────────────────────────────────────────────────────
 
-let allUsers = [];
-
 async function loadUsers() {
   try {
     const { users } = await api.listUsers();
@@ -336,8 +375,6 @@ document.getElementById("filter-role").addEventListener("change", applyFilters);
 document.getElementById("filter-status").addEventListener("change", applyFilters);
 
 // ─── Bulk selection ───────────────────────────────────────────────────────────
-
-let selectedUids = new Set();
 
 function updateBulkBar() {
   const bar = document.getElementById("bulk-bar");
@@ -451,7 +488,7 @@ function renderUsers(users) {
         <strong>${escHtml(u.displayName || u.email)}</strong><br>
         <span style="color:#6b7280">${escHtml(u.email)}</span>
       </td>
-      <td><span class="badge badge-${u.role}">${escHtml(u.role)}</span></td>
+      <td><span class="badge badge-${u.role}">${escHtml(u.role === "project_manager" ? "PM" : u.role)}</span></td>
       <td><span class="badge badge-${u.isActive ? "active" : "inactive"}">${u.isActive ? "Active" : "Inactive"}</span></td>
       <td style="letter-spacing:4px;">${googleIcon}${asanaIcon}${slackIcon}</td>
       <td>${u.taskCount ?? 0}</td>
@@ -465,9 +502,10 @@ function renderUsers(users) {
         </label>
         <select data-uid="${escHtml(u.uid)}" class="role-select"
           style="font-size:12px;padding:3px 6px;margin-left:6px;"
-          ${u.uid === user.uid ? "disabled" : ""}>
-          <option value="user"  ${u.role === "user"  ? "selected" : ""}>User</option>
-          <option value="admin" ${u.role === "admin" ? "selected" : ""}>Admin</option>
+          ${(u.uid === user.uid || !isCurrentUserAdmin) ? "disabled" : ""}>
+          <option value="user"            ${u.role === "user"            ? "selected" : ""}>User</option>
+          <option value="project_manager" ${u.role === "project_manager" ? "selected" : ""}>Project Manager</option>
+          <option value="admin"           ${u.role === "admin"           ? "selected" : ""}>Admin</option>
         </select>
         <button class="btn btn-ghost delete-btn" data-uid="${escHtml(u.uid)}" data-name="${escHtml(u.displayName || u.email)}"
           ${u.uid === user.uid ? "disabled" : ""}
@@ -509,10 +547,11 @@ function renderUsers(users) {
       const role = e.target.value;
       const targetUser = allUsers.find(u => u.uid === uid);
       const name = targetUser?.displayName || targetUser?.email || uid;
+      const prevRole = targetUser?.role ?? "user";
 
-      const verb = role === "admin" ? "promote" : "demote";
-      if (!confirm(`${verb.charAt(0).toUpperCase() + verb.slice(1)} ${name} to ${role}?`)) {
-        sel.value = role === "admin" ? "user" : "admin";
+      const roleLabels = { admin: "Admin", project_manager: "Project Manager", user: "User" };
+      if (!confirm(`Change ${name}'s role to ${roleLabels[role] ?? role}?`)) {
+        sel.value = prevRole;
         return;
       }
       try {
@@ -699,8 +738,6 @@ function renderHealthPanel(integrations) {
 }
 
 // ─── Meetings ─────────────────────────────────────────────────────────────────
-
-let meetingsCursor = null;
 
 async function loadMeetings(append = false) {
   if (!append) meetingsCursor = null;
