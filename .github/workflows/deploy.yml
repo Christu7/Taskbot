@@ -36,7 +36,7 @@ jobs:
         run: echo '${{ secrets.CLIENT_CONFIG_ELYSIANFIELDS }}' > deploy/configs/elysianfields.json
 
       - name: Install functions dependencies
-        run: npm ci --prefix functions
+        run: npm install --prefix functions
 
       - name: Enable legacy functions:config commands
         run: firebase experiments:enable legacyRuntimeConfigCommands
