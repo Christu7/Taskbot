@@ -96,7 +96,7 @@ fi
 # Deploy
 printf "Deploying to %s... " "$PROJECT_ID"
 # shellcheck disable=SC2086
-firebase deploy $ONLY_FLAG --project="$PROJECT_ID"
+firebase deploy $ONLY_FLAG --project="$PROJECT_ID" --force
 
 echo ""
 green "Deploy complete: $APP_URL"
