@@ -35,6 +35,9 @@ jobs:
       - name: Write elysianfields config
         run: echo '${{ secrets.CLIENT_CONFIG_ELYSIANFIELDS }}' > deploy/configs/elysianfields.json
 
+      - name: Enable legacy functions:config commands
+        run: firebase experiments:enable legacyRuntimeConfigCommands
+
       # ── Deploy: sponcon ────────────────────────────────────────────────────
 
       - name: Deploy — sponcon
