@@ -2,8 +2,7 @@
 
 import {
   GoogleAuthProvider,
-  signInWithRedirect,
-  getRedirectResult,
+  signInWithPopup,
   signOut,
   onAuthStateChanged,
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
@@ -11,17 +10,14 @@ import { auth, signInWithCustomToken } from "./firebase-config.js";
 
 export { auth, signInWithCustomToken };
 
-/** Trigger Google sign-in via full-page redirect (more reliable than popup). */
+/** Trigger Google sign-in via popup. */
 export function signInWithGoogle() {
-  return signInWithRedirect(auth, new GoogleAuthProvider());
+  return signInWithPopup(auth, new GoogleAuthProvider());
 }
 
-/**
- * Call once at page load on the login page to handle the result of a redirect sign-in.
- * Resolves with the UserCredential if returning from a redirect, or null otherwise.
- */
+/** No-op kept for backwards compatibility — popup flow needs no redirect handling. */
 export function handleRedirectResult() {
-  return getRedirectResult(auth);
+  return Promise.resolve(null);
 }
 
 /** Sign out the current user and clear cached role state. */
