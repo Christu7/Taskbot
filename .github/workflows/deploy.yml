@@ -4,10 +4,12 @@ on:
   push:
     branches:
       - main
+      - develop
 
 jobs:
-  deploy:
-    name: Deploy all clients
+  deploy-production:
+    name: Deploy production clients (main)
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
 
     steps:
@@ -32,8 +34,8 @@ jobs:
       - name: Write sponcon config
         run: echo '${{ secrets.CLIENT_CONFIG_SPONCON }}' > deploy/configs/sponcon.json
 
-      - name: Write elysianfields config
-        run: echo '${{ secrets.CLIENT_CONFIG_ELYSIANFIELDS }}' > deploy/configs/elysianfields.json
+      - name: Write elysianfields prod config
+        run: echo '${{ secrets.CLIENT_CONFIG_ELYSIANFIELDS_PROD }}' > deploy/configs/elysianfields-prod.json
 
       - name: Install functions dependencies
         run: npm install --prefix functions
@@ -48,9 +50,47 @@ jobs:
           FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN_SPONCON }}
         run: bash deploy/deploy.sh sponcon
 
-      # ── Deploy: elysianfields ──────────────────────────────────────────────
+      # ── Deploy: elysianfields (prod) ───────────────────────────────────────
 
-      - name: Deploy — elysianfields
+      - name: Deploy — elysianfields prod
         env:
-          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN_ELYSIANFIELDS }}
-        run: bash deploy/deploy.sh elysianfields
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN_ELYSIANFIELDS_PROD }}
+        run: bash deploy/deploy.sh elysianfields-prod
+
+  deploy-development:
+    name: Deploy development clients (develop)
+    if: github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Firebase CLI
+        run: npm install -g firebase-tools
+
+      - name: Install jq
+        run: sudo apt-get install -y jq
+
+      # ── Write client configs from secrets ──────────────────────────────────
+
+      - name: Write elysianfields dev config
+        run: echo '${{ secrets.CLIENT_CONFIG_ELYSIANFIELDS_DEV }}' > deploy/configs/elysianfields-dev.json
+
+      - name: Install functions dependencies
+        run: npm install --prefix functions
+
+      - name: Enable legacy functions:config commands
+        run: firebase experiments:enable legacyRuntimeConfigCommands
+
+      # ── Deploy: elysianfields (dev) ────────────────────────────────────────
+
+      - name: Deploy — elysianfields dev
+        env:
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN_ELYSIANFIELDS_DEV }}
+        run: bash deploy/deploy.sh elysianfields-dev

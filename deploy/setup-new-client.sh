@@ -72,7 +72,22 @@ else
   read -r -s -p "  Google OAuth Client Secret: " GOOGLE_CLIENT_SECRET
   echo ""
 
-  APP_URL="https://${PROJECT_ID}.web.app"
+  bold "\nStep 1b: Firebase web app config"
+  yellow "  Find this in: Firebase Console → Project Settings → Your Apps → SDK setup"
+  echo ""
+  read -r -p "  Firebase API Key: " FIREBASE_API_KEY
+  read -r -p "  Firebase Auth Domain [${PROJECT_ID}.firebaseapp.com]: " FIREBASE_AUTH_DOMAIN
+  FIREBASE_AUTH_DOMAIN="${FIREBASE_AUTH_DOMAIN:-${PROJECT_ID}.firebaseapp.com}"
+  read -r -p "  Firebase Storage Bucket [${PROJECT_ID}.firebasestorage.app]: " FIREBASE_STORAGE_BUCKET
+  FIREBASE_STORAGE_BUCKET="${FIREBASE_STORAGE_BUCKET:-${PROJECT_ID}.firebasestorage.app}"
+  read -r -p "  Firebase Messaging Sender ID: " FIREBASE_MESSAGING_SENDER_ID
+  read -r -p "  Firebase App ID: " FIREBASE_APP_ID
+
+  read -r -p "  Asana OAuth Client ID (leave blank to configure later): " ASANA_CLIENT_ID
+  read -r -s -p "  Asana OAuth Client Secret (leave blank to configure later): " ASANA_CLIENT_SECRET
+  echo ""
+  read -r -p "  Hosting site name (leave blank if same as project ID): " HOSTING_SITE
+  APP_URL="https://${HOSTING_SITE:-${PROJECT_ID}}.web.app"
   KMS_KEY_NAME="projects/${PROJECT_ID}/locations/${REGION}/keyRings/taskbot-keyring/cryptoKeys/taskbot-key"
 
   # Write config
@@ -84,13 +99,30 @@ else
     --arg kms "$KMS_KEY_NAME" \
     --arg email "$ADMIN_EMAIL" \
     --arg url "$APP_URL" \
+    --arg site "$HOSTING_SITE" \
+    --arg asanaId "$ASANA_CLIENT_ID" \
+    --arg asanaSecret "$ASANA_CLIENT_SECRET" \
+    --arg fbApiKey "$FIREBASE_API_KEY" \
+    --arg fbAuthDomain "$FIREBASE_AUTH_DOMAIN" \
+    --arg fbBucket "$FIREBASE_STORAGE_BUCKET" \
+    --arg fbSenderId "$FIREBASE_MESSAGING_SENDER_ID" \
+    --arg fbAppId "$FIREBASE_APP_ID" \
     '{
       projectId: $pid,
       region: $region,
       google: { oauthClientId: $gcid, oauthClientSecret: $gcs },
       kms: { keyName: $kms },
       adminEmail: $email,
-      appUrl: $url
+      appUrl: $url,
+      hostingSite: (if $site == "" then null else $site end),
+      asana: { clientId: $asanaId, clientSecret: $asanaSecret },
+      firebase: {
+        apiKey: $fbApiKey,
+        authDomain: $fbAuthDomain,
+        storageBucket: $fbBucket,
+        messagingSenderId: $fbSenderId,
+        appId: $fbAppId
+      }
     }' > "$CONFIG_FILE"
 
   green "  Config saved to: $CONFIG_FILE"
@@ -119,6 +151,10 @@ bold "\nStep 3: Enabling required Google Cloud APIs"
 APIS=(
   firestore.googleapis.com
   cloudfunctions.googleapis.com
+  cloudbuild.googleapis.com
+  run.googleapis.com
+  eventarc.googleapis.com
+  artifactregistry.googleapis.com
   firebase.googleapis.com
   cloudkms.googleapis.com
   drive.googleapis.com
@@ -129,6 +165,28 @@ for api in "${APIS[@]}"; do
   printf "  Enabling %s ... " "$api"
   gcloud services enable "$api" --project="$PROJECT_ID" --quiet
   green "done"
+done
+
+# ── Step 3b: Grant Cloud Build & Compute service account permissions ───────────
+# Required for 2nd gen Cloud Functions under org policies that restrict defaults.
+
+bold "\nStep 3b: Granting Cloud Build and Compute service account permissions"
+PROJECT_NUMBER=$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')
+COMPUTE_SA="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
+CLOUDBUILD_SA="${PROJECT_NUMBER}@cloudbuild.gserviceaccount.com"
+
+for role in roles/logging.logWriter roles/storage.objectViewer roles/artifactregistry.writer; do
+  printf "  Granting %s to compute SA ... " "$role"
+  gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+    --member="serviceAccount:${COMPUTE_SA}" \
+    --role="$role" --quiet 2>/dev/null && green "done" || yellow "skipped (may already exist)"
+done
+
+for role in roles/storage.objectAdmin roles/logging.logWriter roles/artifactregistry.writer roles/cloudbuild.builds.builder; do
+  printf "  Granting %s to cloudbuild SA ... " "$role"
+  gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+    --member="serviceAccount:${CLOUDBUILD_SA}" \
+    --role="$role" --quiet 2>/dev/null && green "done" || yellow "skipped (may already exist)"
 done
 
 # ── Step 4: Create KMS key ring and key ───────────────────────────────────────
@@ -160,17 +218,27 @@ else
   green "done"
 fi
 
-# Grant the default Cloud Functions service account KMS encrypt/decrypt
+NEEDS_KMS_GRANT=false
+# Grant the default Cloud Functions service account KMS encrypt/decrypt.
+# This service account is created on first Cloud Functions deploy, so we
+# attempt it here and again after functions deploy if it fails.
 SA="${PROJECT_ID}@appspot.gserviceaccount.com"
+grant_kms() {
+  gcloud kms keys add-iam-policy-binding "$KMS_KEY" \
+    --keyring="$KMS_RING" \
+    --location="$REGION" \
+    --member="serviceAccount:${SA}" \
+    --role="roles/cloudkms.cryptoKeyEncrypterDecrypter" \
+    --project="$PROJECT_ID" \
+    --quiet 2>/dev/null
+}
 printf "  Granting KMS roles to %s ... " "$SA"
-gcloud kms keys add-iam-policy-binding "$KMS_KEY" \
-  --keyring="$KMS_RING" \
-  --location="$REGION" \
-  --member="serviceAccount:${SA}" \
-  --role="roles/cloudkms.cryptoKeyEncrypterDecrypter" \
-  --project="$PROJECT_ID" \
-  --quiet
-green "done"
+if grant_kms; then
+  green "done"
+else
+  yellow "skipped (service account not yet created — will retry after functions deploy)"
+  NEEDS_KMS_GRANT=true
+fi
 
 # ── Step 5: Deploy Firestore indexes and security rules ───────────────────────
 
@@ -181,19 +249,39 @@ firebase deploy --only firestore --project="$PROJECT_ID"
 # ── Step 6: Set environment variables ─────────────────────────────────────────
 
 bold "\nStep 6: Setting environment variables"
-firebase functions:config:set \
-  google.client_id="$GOOGLE_CLIENT_ID" \
-  google.client_secret="$GOOGLE_CLIENT_SECRET" \
-  kms.key_name="$KMS_KEY_NAME" \
-  app.url="$APP_URL" \
-  --project="$PROJECT_ID"
-green "  Environment variables set."
+# Write per-project functions env file — Firebase CLI uploads this automatically.
+cat > "$REPO_ROOT/functions/.env.${PROJECT_ID}" <<EOF
+GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+OAUTH_REDIRECT_URI=https://us-central1-${PROJECT_ID}.cloudfunctions.net/oauthCallback
+OAUTH_SUCCESS_REDIRECT=${APP_URL}
+ASANA_CLIENT_ID=${ASANA_CLIENT_ID:-}
+ASANA_CLIENT_SECRET=${ASANA_CLIENT_SECRET:-}
+ASANA_REDIRECT_URI=${APP_URL}/api/auth/asana/callback
+KMS_KEY_NAME=${KMS_KEY_NAME}
+EOF
+green "  Environment variables written to functions/.env.${PROJECT_ID}"
 
 # ── Step 7: Build and deploy Cloud Functions ──────────────────────────────────
 
 bold "\nStep 7: Deploying Cloud Functions"
 npm --prefix "$REPO_ROOT/functions" run build
 firebase deploy --only functions --project="$PROJECT_ID"
+
+# Retry KMS grant now that functions deploy has created the service account
+if [[ "${NEEDS_KMS_GRANT:-}" == "true" ]]; then
+  printf "  Retrying KMS grant for %s ... " "$SA"
+  if grant_kms; then
+    green "done"
+  else
+    yellow "WARNING: KMS grant failed — run manually:"
+    yellow "  gcloud kms keys add-iam-policy-binding taskbot-key \\"
+    yellow "    --keyring=taskbot-keyring --location=$REGION \\"
+    yellow "    --member=serviceAccount:${SA} \\"
+    yellow "    --role=roles/cloudkms.cryptoKeyEncrypterDecrypter \\"
+    yellow "    --project=$PROJECT_ID"
+  fi
+fi
 
 # ── Step 8: Deploy Hosting ────────────────────────────────────────────────────
 

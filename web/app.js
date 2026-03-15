@@ -1,10 +1,5 @@
-// ─── Firebase Configuration ───────────────────────────────────────────────────
-// TODO: Replace this with your actual Firebase project config.
-// Find it in: Firebase Console → Project Settings → Your Apps → SDK setup
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { db, auth, projectId } from "./js/firebase-config.js";
 import {
-  getFirestore,
-  connectFirestoreEmulator,
   collectionGroup,
   query,
   where,
@@ -14,30 +9,11 @@ import {
   updateDoc,
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import {
-  getAuth,
   GoogleAuthProvider,
   signInWithPopup,
   signOut,
   onAuthStateChanged,
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-
-const firebaseConfig = {
-  apiKey: "AIzaSyD-oZFSZo_9cHm9FegF8e_-cQJGtuLv6UM",
-  authDomain: "taskbot-fb10d.firebaseapp.com",
-  projectId: "taskbot-fb10d",
-  storageBucket: "taskbot-fb10d.firebasestorage.app",
-  messagingSenderId: "997717209533",
-  appId: "1:997717209533:web:3876c8dedfb2a8dfe9a2d4",
-};
-
-const app = initializeApp(firebaseConfig);
-const db = getFirestore(app);
-const auth = getAuth(app);
-
-// Connect to local Firestore emulator in development
-if (location.hostname === "127.0.0.1" || location.hostname === "localhost") {
-  connectFirestoreEmulator(db, "127.0.0.1", 8080);
-}
 
 // ─── DOM References ───────────────────────────────────────────────────────────
 const taskList = document.getElementById("task-list");
@@ -133,8 +109,8 @@ logoutBtn.addEventListener("click", () => {
 connectBtn.addEventListener("click", async () => {
   const token = await auth.currentUser.getIdToken();
   const base = location.hostname === "127.0.0.1" || location.hostname === "localhost"
-    ? "http://127.0.0.1:5001/taskbot-fb10d/us-central1"
-    : "https://us-central1-taskbot-fb10d.cloudfunctions.net";
+    ? `http://127.0.0.1:5001/${projectId}/us-central1`
+    : `https://us-central1-${projectId}.cloudfunctions.net`;
   window.location.href = `${base}/oauthInit?token=${token}`;
 });
 
