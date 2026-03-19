@@ -1,5 +1,6 @@
 import { requireAuth, signOutUser, showToast, initAdminNav } from "./auth.js";
 import { api } from "./api.js";
+import { projectId } from "./firebase-config.js";
 
 const loadingEl  = document.getElementById("loading");
 const listEl     = document.getElementById("meetings-list");
@@ -25,8 +26,8 @@ initAdminNav();
 connectBtn.addEventListener("click", async () => {
   const token = await user.getIdToken();
   const base = location.hostname === "127.0.0.1" || location.hostname === "localhost"
-    ? "http://127.0.0.1:5001/taskbot-fb10d/us-central1"
-    : "https://us-central1-taskbot-fb10d.cloudfunctions.net";
+    ? `http://127.0.0.1:5001/${projectId}/us-central1`
+    : `https://us-central1-${projectId}.cloudfunctions.net`;
   window.location.href = `${base}/oauthInit?token=${token}`;
 });
 

@@ -9,5 +9,17 @@
     "keyName": ""
   },
   "adminEmail": "",
-  "appUrl": ""
+  "appUrl": "",
+  "hostingSite": "",
+  "asana": {
+    "clientId": "",
+    "clientSecret": ""
+  },
+  "firebase": {
+    "apiKey": "",
+    "authDomain": "",
+    "storageBucket": "",
+    "messagingSenderId": "",
+    "appId": ""
+  }
 }
