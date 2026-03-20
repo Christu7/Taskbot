@@ -56,6 +56,7 @@ PROJECT_ID=$(jq -r '.projectId' "$CONFIG_FILE")
 REGION=$(jq -r '.region' "$CONFIG_FILE")
 GOOGLE_CLIENT_ID=$(jq -r '.google.oauthClientId' "$CONFIG_FILE")
 GOOGLE_CLIENT_SECRET=$(jq -r '.google.oauthClientSecret' "$CONFIG_FILE")
+OAUTH_CALLBACK_URL=$(jq -r '.google.oauthCallbackUrl // empty' "$CONFIG_FILE")
 KMS_KEY_NAME=$(jq -r '.kms.keyName' "$CONFIG_FILE")
 APP_URL=$(jq -r '.appUrl' "$CONFIG_FILE")
 # hostingSite overrides the deploy target when the hosting site name differs from projectId
@@ -94,7 +95,7 @@ printf "Writing functions/.env.%s ... " "$PROJECT_ID"
 cat > "$REPO_ROOT/functions/.env.${PROJECT_ID}" <<EOF
 GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
 GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
-OAUTH_REDIRECT_URI=https://us-central1-${PROJECT_ID}.cloudfunctions.net/oauthCallback
+OAUTH_REDIRECT_URI=${OAUTH_CALLBACK_URL:-https://us-central1-${PROJECT_ID}.cloudfunctions.net/oauthCallback}
 OAUTH_SUCCESS_REDIRECT=${APP_URL}
 ASANA_CLIENT_ID=${ASANA_CLIENT_ID}
 ASANA_CLIENT_SECRET=${ASANA_CLIENT_SECRET}

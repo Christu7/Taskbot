@@ -3,7 +3,8 @@
   "region": "us-central1",
   "google": {
     "oauthClientId": "",
-    "oauthClientSecret": ""
+    "oauthClientSecret": "",
+    "oauthCallbackUrl": ""
   },
   "kms": {
     "keyName": ""
