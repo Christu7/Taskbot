@@ -10,6 +10,7 @@ import { UserPreferences } from "./models/user";
 import { logActivity } from "./services/activityLogger";
 export { driveWatcher } from "./functions/driveWatcher";
 export { processTranscript } from "./functions/processTranscript";
+export { dedupTranscripts } from "./functions/dedupTranscripts";
 export { notifyUsers } from "./functions/notifyUsers";
 export { taskCreator } from "./functions/taskCreator";
 export { expireProposals } from "./functions/expireProposals";

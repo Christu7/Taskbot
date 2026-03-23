@@ -93,8 +93,9 @@ function isRateLimitError(err: unknown): boolean {
 /**
  * Runs validateAndNormalise over an array of raw model output objects.
  * Invalid items are skipped with a warning rather than aborting the batch.
+ * Exported for use by the dedupTranscripts scheduler.
  */
-function validateAll(rawTasks: unknown[]): ExtractedTask[] {
+export function validateAndNormaliseTasks(rawTasks: unknown[]): ExtractedTask[] {
   const validated: ExtractedTask[] = [];
   for (let i = 0; i < rawTasks.length; i++) {
     try {
@@ -173,10 +174,10 @@ export async function extractTasksFromTranscript(
   transcript: string,
   context: MeetingContext,
   uid?: string
-): Promise<{ tasks: ExtractedTask[]; tokensUsed: { input: number; output: number } }> {
+): Promise<{ tasks: ExtractedTask[]; tokensUsed: { input: number; output: number }; needsDedup: boolean }> {
   if (!transcript.trim()) {
     logger.warn("aiExtractor: received empty transcript — skipping extraction");
-    return { tasks: [], tokensUsed: { input: 0, output: 0 } };
+    return { tasks: [], tokensUsed: { input: 0, output: 0 }, needsDedup: false };
   }
 
   logger.info("aiExtractor: starting extraction", {
@@ -196,12 +197,12 @@ export async function extractTasksFromTranscript(
 
     logger.info(`aiExtractor: model returned ${rawTasks.length} raw task(s)`);
 
-    const validated = validateAll(rawTasks as unknown[]);
+    const validated = validateAndNormaliseTasks(rawTasks as unknown[]);
     logger.info(
       `aiExtractor: extraction complete — ${validated.length} valid task(s) extracted ` +
       `(${(rawTasks as unknown[]).length - validated.length} skipped due to validation errors)`
     );
-    return { tasks: validated, tokensUsed: result.tokensUsed };
+    return { tasks: validated, tokensUsed: result.tokensUsed, needsDedup: false };
   }
 
   // ── Multi-chunk path ───────────────────────────────────────────────────────
@@ -255,23 +256,16 @@ export async function extractTasksFromTranscript(
     totalOutput += chunkResult.tokensUsed.output;
   }
 
-  logger.info(`aiExtractor: all chunks processed — ${allRawTasks.length} raw task(s), waiting 60s before dedup`);
-  await sleep(60_000);
+  logger.info(`aiExtractor: all chunks processed — ${allRawTasks.length} raw task(s) collected`);
 
-  // ── Dedup step: one small AI call over task strings only ──────────────────
-  const dedupResult = await provider.deduplicateTasks(allRawTasks as ExtractedTask[]);
-  totalInput += dedupResult.tokensUsed.input;
-  totalOutput += dedupResult.tokensUsed.output;
-
+  const validated = validateAndNormaliseTasks(allRawTasks);
   logger.info(
-    `aiExtractor: dedup complete — ${allRawTasks.length} → ${dedupResult.tasks.length} task(s)`
+    `aiExtractor: ${validated.length} valid task(s) across all chunks — deferring dedup to scheduler`
   );
 
-  const validated = validateAll(dedupResult.tasks as unknown[]);
-  logger.info(
-    `aiExtractor: extraction complete — ${validated.length} valid task(s) extracted ` +
-    `(${(dedupResult.tasks as unknown[]).length - validated.length} skipped due to validation errors)`
-  );
-
-  return { tasks: validated, tokensUsed: { input: totalInput, output: totalOutput } };
+  return {
+    tasks: validated,
+    tokensUsed: { input: totalInput, output: totalOutput },
+    needsDedup: true,
+  };
 }

@@ -3,15 +3,15 @@ import { onDocumentCreated } from "firebase-functions/v2/firestore";
 import { Timestamp, FieldValue } from "firebase-admin/firestore";
 import { logger } from "firebase-functions";
 import { ProcessedTranscriptDocument } from "../models/processedTranscript";
-import { ProposalDocument } from "../models/proposal";
 import { MeetingContext, ExtractedTask } from "../models/aiExtraction";
-import { UserDocument } from "../models/user";
 import { getValidAccessToken } from "../auth";
 import { getTranscriptContent, TranscriptContent } from "../services/drive";
 import { getUserByEmail } from "../services/firestore";
+import { UserDocument } from "../models/user";
 import { extractTasksFromTranscript } from "../services/aiExtractor";
 import { AIExtractionError, TranscriptNotFoundError } from "../utils/errors";
 import { logActivity } from "../services/activityLogger";
+import { fanOutProposals } from "../services/proposalWriter";
 
 const AI_RETRY_DELAY_MS = 30_000;
 
@@ -153,12 +153,14 @@ export const processTranscript = onDocumentCreated(
       // ── AI extraction with one automatic retry after 30 s ──────────────
       let extractedTasks: ExtractedTask[];
       let tokensUsed: { input: number; output: number } = { input: 0, output: 0 };
+      let needsDedup = false;
       try {
         const firstResult = await extractTasksFromTranscript(
           transcriptContent.transcript, context, transcriptDoc.detectedByUid
         );
         extractedTasks = firstResult.tasks;
         tokensUsed = firstResult.tokensUsed;
+        needsDedup = firstResult.needsDedup;
       } catch (firstErr) {
         if (firstErr instanceof AIExtractionError) {
           logger.warn(
@@ -172,6 +174,7 @@ export const processTranscript = onDocumentCreated(
           );
           extractedTasks = retryResult.tasks;
           tokensUsed = retryResult.tokensUsed;
+          needsDedup = retryResult.needsDedup;
         } else {
           throw firstErr;
         }
@@ -179,7 +182,27 @@ export const processTranscript = onDocumentCreated(
 
       logger.info(`processTranscript: AI returned ${extractedTasks.length} task(s)`);
 
-      // ── Step 4: Handle zero-task result ───────────────────────────────
+      // ── Step 4a: Defer dedup to scheduler (multi-chunk transcripts) ────
+      // Saves raw tasks to Firestore and exits. The dedupTranscripts scheduler
+      // will pick this up after dedupAfter and complete the pipeline.
+      if (needsDedup) {
+        const dedupAfter = Timestamp.fromMillis(Date.now() + 60_000);
+        await docRef.update({
+          status: "dedup_pending",
+          rawTasks: extractedTasks,
+          dedupAfter,
+          tokensUsed,
+          transcriptFormat: transcriptContent.format,
+          hasNotes: !!transcriptContent.notes,
+        } as Partial<ProcessedTranscriptDocument> & Record<string, unknown>);
+        logger.info(
+          `processTranscript: ${extractedTasks.length} raw task(s) saved for ${meetingId} — ` +
+          `dedup deferred until ${dedupAfter.toDate().toISOString()}`
+        );
+        return;
+      }
+
+      // ── Step 4b: Handle zero-task result ──────────────────────────────
       if (extractedTasks.length === 0) {
         await docRef.update({
           status: "completed",
@@ -194,106 +217,14 @@ export const processTranscript = onDocumentCreated(
       }
 
       // ── Step 5: Fan out proposals to matched, active users ─────────────
-      const proposalsBase = db().collection("proposals").doc(meetingId).collection("tasks");
-
-      // Clear any existing proposals before writing — makes the pipeline
-      // idempotent if the same transcript is reprocessed (e.g. during testing).
-      const existingProposals = await proposalsBase.get();
-      if (!existingProposals.empty) {
-        const clearBatch = db().batch();
-        existingProposals.docs.forEach((d) => clearBatch.delete(d.ref));
-        await clearBatch.commit();
-        logger.info(
-          `processTranscript: cleared ${existingProposals.size} existing proposal(s) for ${meetingId}`
-        );
-      }
-
-      const batch = db().batch();
-      let proposalCount = 0;
-      let skippedCount = 0;
-
-      for (const task of extractedTasks) {
-        // Skip tasks with no assignee email
-        if (!task.assigneeEmail) {
-          logger.info(
-            `processTranscript: task "${task.title}" has no assignee email — skipping`
-          );
-          skippedCount++;
-          continue;
-        }
-
-        // Look up the assignee in our users collection
-        const assigneeUser = await getUserByEmail(task.assigneeEmail);
-
-        if (!assigneeUser) {
-          logger.info(
-            `processTranscript: no registered user found for "${task.assigneeEmail}" ` +
-            `(task: "${task.title}") — skipping`
-          );
-          skippedCount++;
-          continue;
-        }
-
-        if (!assigneeUser.isActive) {
-          logger.info(
-            `processTranscript: user "${task.assigneeEmail}" is inactive — skipping task "${task.title}"`
-          );
-          skippedCount++;
-          continue;
-        }
-
-        // Calculate expiry from the assignee's preferences
-        const expiryHours = assigneeUser.preferences?.proposalExpiryHours ?? 48;
-        const now = Timestamp.now();
-        const expiresAt = Timestamp.fromMillis(now.toMillis() + expiryHours * 60 * 60 * 1000);
-
-        const proposal: ProposalDocument = {
-          // From ExtractedTask
-          title: task.title,
-          description: task.description,
-          assigneeEmail: task.assigneeEmail,
-          assigneeName: task.assigneeName,
-          confidence: task.confidence,
-          transcriptExcerpt: task.transcriptExcerpt,
-          isSensitive: task.isSensitive,
-          suggestedDueDate: task.suggestedDueDate,
-          rawAssigneeText: task.rawAssigneeText,
-          sharedWith: task.sharedWith ?? [],
-          // Proposal-specific
-          meetingId,
-          assigneeUid: assigneeUser.uid,
-          status: "pending",
-          createdAt: now,
-          expiresAt,
-        };
-
-        // Use the extractor-generated UUID as the document ID
-        batch.set(proposalsBase.doc(task.id), proposal);
-        proposalCount++;
-
-        logger.info(
-          `processTranscript: queued proposal "${task.title}" ` +
-          `for ${task.assigneeEmail} (confidence: ${task.confidence})`
-        );
-      }
-
-      await batch.commit();
-
-      await docRef.update({
-        status: "proposed",
-        transcriptFormat: transcriptContent.format,
-        hasNotes: !!transcriptContent.notes,
-        tokensUsed,
-      } as Partial<ProcessedTranscriptDocument> & Record<string, unknown>);
+      const { proposalCount, skippedCount } = await fanOutProposals(
+        meetingId, transcriptDoc, extractedTasks, docRef, tokensUsed,
+        { transcriptFormat: transcriptContent.format, hasNotes: !!transcriptContent.notes }
+      );
 
       logger.info(
         `processTranscript: pipeline complete for ${meetingId} — ` +
         `${proposalCount} proposal(s) created, ${skippedCount} task(s) skipped`
-      );
-
-      await logActivity("meeting_processed",
-        `Meeting "${transcriptDoc.meetingTitle}" processed — ${proposalCount} task${proposalCount !== 1 ? "s" : ""} extracted`,
-        { meetingId, userId: transcriptDoc.detectedByUid, taskCount: proposalCount }
       );
 
     } catch (err) {

@@ -14,6 +14,8 @@ export type ProcessedTranscriptStatus =
   | "pending"
   | "processing"
   | "extracting"
+  | "dedup_pending"     // Chunks processed; waiting 60 s before dedup to avoid rate limit
+  | "deduplicating"    // Dedup scheduler has claimed the doc and is calling the AI
   | "proposed"
   | "completed"
   | "failed"
@@ -80,6 +82,17 @@ export interface ProcessedTranscriptDocument {
   hasNotes?: boolean;
   /** Token usage from the AI extraction call. */
   tokensUsed?: { input: number; output: number };
+  /**
+   * Validated tasks collected from all transcript chunks, stored while
+   * waiting for the dedup call (status === "dedup_pending").
+   * Cleared after the dedup scheduler promotes the doc to "proposed".
+   */
+  rawTasks?: unknown[];
+  /**
+   * Earliest time the dedup call may be made.
+   * The scheduler skips this document until now > dedupAfter.
+   */
+  dedupAfter?: Timestamp;
   /**
    * Server timestamp set when the processor claims the document (status → "processing").
    * Used to detect stuck transcripts: if "processing" for more than 15 minutes, the

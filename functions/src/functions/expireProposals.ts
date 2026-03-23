@@ -110,12 +110,23 @@ async function deleteExpiredTokens(now: Timestamp): Promise<void> {
 async function resetStuckTranscripts(now: Timestamp): Promise<void> {
   const stuckThreshold = Timestamp.fromMillis(now.toMillis() - 15 * 60 * 1000);
 
-  const snap = await admin
-    .firestore()
-    .collection("processedTranscripts")
-    .where("status", "==", "processing")
-    .where("processingStartedAt", "<", stuckThreshold)
-    .get();
+  // Check both "processing" (stuck during extraction) and "deduplicating"
+  // (stuck during the dedup AI call). Both use processingStartedAt as the
+  // claim timestamp so the same threshold applies.
+  const [processingSnap, deduplicatingSnap] = await Promise.all([
+    admin.firestore()
+      .collection("processedTranscripts")
+      .where("status", "==", "processing")
+      .where("processingStartedAt", "<", stuckThreshold)
+      .get(),
+    admin.firestore()
+      .collection("processedTranscripts")
+      .where("status", "==", "deduplicating")
+      .where("processingStartedAt", "<", stuckThreshold)
+      .get(),
+  ]);
+
+  const snap = { docs: [...processingSnap.docs, ...deduplicatingSnap.docs], empty: processingSnap.empty && deduplicatingSnap.empty, size: processingSnap.size + deduplicatingSnap.size };
 
   if (snap.empty) {
     logger.info("expireProposals: no stuck transcripts to reset");
