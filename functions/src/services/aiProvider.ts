@@ -115,7 +115,7 @@ export class AnthropicProvider implements AIProvider {
     // ── First attempt ──────────────────────────────────────────────────────
     const firstResponse = await client.messages.create({
       model: this.model,
-      max_tokens: 4096,
+      max_tokens: 8192,
       system,
       messages: [{ role: "user", content: user }],
     });
@@ -140,7 +140,7 @@ export class AnthropicProvider implements AIProvider {
     // ── Retry: send the bad response back and ask for clean JSON ──────────
     const retryResponse = await client.messages.create({
       model: this.model,
-      max_tokens: 4096,
+      max_tokens: 8192,
       system,
       messages: [
         { role: "user", content: user },
@@ -179,7 +179,7 @@ export class AnthropicProvider implements AIProvider {
 
     const response = await client.messages.create({
       model: this.model,
-      max_tokens: 4096,
+      max_tokens: 8192,
       messages: [{ role: "user", content: prompt }],
     });
 

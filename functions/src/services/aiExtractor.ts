@@ -255,7 +255,8 @@ export async function extractTasksFromTranscript(
     totalOutput += chunkResult.tokensUsed.output;
   }
 
-  logger.info(`aiExtractor: all chunks processed — ${allRawTasks.length} raw task(s), running dedup`);
+  logger.info(`aiExtractor: all chunks processed — ${allRawTasks.length} raw task(s), waiting 60s before dedup`);
+  await sleep(60_000);
 
   // ── Dedup step: one small AI call over task strings only ──────────────────
   const dedupResult = await provider.deduplicateTasks(allRawTasks as ExtractedTask[]);
