@@ -43,19 +43,17 @@ export interface AIProvider {
 // ─── JSON parsing helpers ─────────────────────────────────────────────────────
 
 /**
- * Extracts a JSON array string from a model response that may be wrapped
- * in a markdown code block (```json ... ```) or returned as raw JSON.
+ * Extracts the JSON array substring from a model response by finding the
+ * first '[' and last ']', ignoring any surrounding prose or code fences.
+ * This is more resilient than regex matching when the model adds commentary.
  */
 function extractJsonString(text: string): string {
-  // Prefer a fenced code block: ```json\n[...]\n```
-  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if (fenced) return fenced[1].trim();
-
-  // Fall back to the first [...] array in the response
-  const rawArray = text.match(/\[[\s\S]*\]/);
-  if (rawArray) return rawArray[0];
-
-  throw new Error("No JSON array found in model response.");
+  const start = text.indexOf("[");
+  const end = text.lastIndexOf("]");
+  if (start === -1 || end === -1 || end < start) {
+    throw new Error("No JSON array found in model response.");
+  }
+  return text.slice(start, end + 1);
 }
 
 /**

@@ -128,9 +128,12 @@ export class OpenAIProvider implements AIProvider {
   }
 
   private parseResponse(text: string): ExtractedTask[] {
-    const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-    const jsonStr = fenced ? fenced[1].trim() : text.match(/\[[\s\S]*\]/)?.[0];
-    if (!jsonStr) throw new Error("No JSON array found in model response.");
+    const start = text.indexOf("[");
+    const end = text.lastIndexOf("]");
+    if (start === -1 || end === -1 || end < start) {
+      throw new Error("No JSON array found in model response.");
+    }
+    const jsonStr = text.slice(start, end + 1);
     const parsed = JSON.parse(jsonStr);
     if (!Array.isArray(parsed)) throw new Error(`Expected a JSON array but got: ${typeof parsed}`);
     return parsed as ExtractedTask[];

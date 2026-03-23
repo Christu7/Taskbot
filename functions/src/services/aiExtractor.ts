@@ -223,21 +223,29 @@ export async function extractTasksFromTranscript(
     try {
       chunkResult = await provider.extractTasks(chunks[i], context);
     } catch (err) {
-      if (!isRateLimitError(err)) throw err;
-
-      logger.warn(
-        `aiExtractor: rate limit on chunk ${i + 1}/${chunks.length} — retrying in 60s`,
-        { error: (err as Error).message }
-      );
-      await sleep(RATE_LIMIT_RETRY_DELAY_MS);
-
-      try {
-        chunkResult = await provider.extractTasks(chunks[i], context);
-      } catch (retryErr) {
-        throw new AIExtractionError(
-          "rate_limit",
-          `Chunk ${i + 1}/${chunks.length} failed after rate-limit retry: ${(retryErr as Error).message}`
+      if (isRateLimitError(err)) {
+        logger.warn(
+          `aiExtractor: rate limit on chunk ${i + 1}/${chunks.length} — retrying in 60s`,
+          { error: (err as Error).message }
         );
+        await sleep(RATE_LIMIT_RETRY_DELAY_MS);
+        try {
+          chunkResult = await provider.extractTasks(chunks[i], context);
+        } catch (retryErr) {
+          throw new AIExtractionError(
+            "rate_limit",
+            `Chunk ${i + 1}/${chunks.length} failed after rate-limit retry: ${(retryErr as Error).message}`
+          );
+        }
+      } else if (err instanceof AIExtractionError) {
+        // JSON parse failure — skip this chunk rather than failing the whole transcript
+        logger.warn(
+          `aiExtractor: JSON parse failed on chunk ${i + 1}/${chunks.length} — skipping chunk`,
+          { error: (err as Error).message }
+        );
+        chunkResult = { tasks: [], tokensUsed: { input: 0, output: 0 } };
+      } else {
+        throw err;
       }
     }
 
