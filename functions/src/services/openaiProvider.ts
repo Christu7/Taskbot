@@ -101,11 +101,14 @@ export class OpenAIProvider implements AIProvider {
 
   async deduplicateTasks(tasks: ExtractedTask[]): Promise<AIExtractionResult> {
     const client = await this.getClient();
+    const titlesOnly = tasks.map((t) => ({ title: t.title, description: t.description }));
     const prompt =
       "The following tasks were extracted from different segments of the same meeting. " +
-      "Remove exact duplicates and near-duplicates. Return a clean deduplicated JSON array " +
-      "of tasks in the same format, inside a ```json code block.\n\n" +
-      "Tasks: " + JSON.stringify(tasks);
+      "Remove exact duplicates and near-duplicates. " +
+      "Return ONLY a JSON array where each element has two fields: " +
+      "\"title\" (string) and \"description\" (string). " +
+      "Be concise — no other fields. Output inside a ```json code block.\n\n" +
+      "Tasks: " + JSON.stringify(titlesOnly);
 
     const response = await client.chat.completions.create({
       model: this.model,
@@ -114,16 +117,18 @@ export class OpenAIProvider implements AIProvider {
     });
 
     const text = response.choices[0]?.message?.content ?? "";
+    const tokensUsed = {
+      input: response.usage?.prompt_tokens ?? 0,
+      output: response.usage?.completion_tokens ?? 0,
+    };
     try {
-      return {
-        tasks: this.parseResponse(text),
-        tokensUsed: {
-          input: response.usage?.prompt_tokens ?? 0,
-          output: response.usage?.completion_tokens ?? 0,
-        },
-      };
+      return { tasks: this.parseResponse(text), tokensUsed };
     } catch (err) {
-      throw new AIExtractionError("openai", `Dedup parse failed: ${(err as Error).message}`);
+      logger.warn(
+        "openaiProvider: dedup parse failed after retry — returning raw tasks as-is",
+        { error: (err as Error).message }
+      );
+      return { tasks, tokensUsed };
     }
   }
 

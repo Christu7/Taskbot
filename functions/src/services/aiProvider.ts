@@ -171,11 +171,17 @@ export class AnthropicProvider implements AIProvider {
 
   async deduplicateTasks(tasks: ExtractedTask[]): Promise<AIExtractionResult> {
     const client = await this.getClient();
+    // Ask for only title+description to keep the output well within token limits.
+    // The full task objects are re-merged from rawTasks in dedupTranscripts after
+    // the scheduler matches deduped titles back to the originals.
+    const titlesOnly = tasks.map((t) => ({ title: t.title, description: t.description }));
     const prompt =
       "The following tasks were extracted from different segments of the same meeting. " +
-      "Remove exact duplicates and near-duplicates. Return a clean deduplicated JSON array " +
-      "of tasks in the same format, inside a ```json code block.\n\n" +
-      "Tasks: " + JSON.stringify(tasks);
+      "Remove exact duplicates and near-duplicates. " +
+      "Return ONLY a JSON array where each element has two fields: " +
+      "\"title\" (string) and \"description\" (string). " +
+      "Be concise — no other fields. Output inside a ```json code block.\n\n" +
+      "Tasks: " + JSON.stringify(titlesOnly);
 
     const response = await client.messages.create({
       model: this.model,
@@ -193,7 +199,17 @@ export class AnthropicProvider implements AIProvider {
         },
       };
     } catch (err) {
-      throw new AIExtractionError("anthropic", `Dedup parse failed: ${(err as Error).message}`);
+      logger.warn(
+        "aiProvider(anthropic): dedup parse failed after retry — returning raw tasks as-is",
+        { error: (err as Error).message }
+      );
+      return {
+        tasks,
+        tokensUsed: {
+          input: response.usage.input_tokens,
+          output: response.usage.output_tokens,
+        },
+      };
     }
   }
 

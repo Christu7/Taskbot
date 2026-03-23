@@ -5,7 +5,6 @@ import { logger } from "firebase-functions";
 import { ProcessedTranscriptDocument } from "../models/processedTranscript";
 import { ExtractedTask } from "../models/aiExtraction";
 import { getAIProviderForUser, getAIProvider } from "../services/aiProvider";
-import { validateAndNormaliseTasks } from "../services/aiExtractor";
 import { fanOutProposals } from "../services/proposalWriter";
 import { logActivity } from "../services/activityLogger";
 
@@ -97,7 +96,20 @@ async function processDedupDoc(
       output: chunkTokensUsed.output + dedupResult.tokensUsed.output,
     };
 
-    const finalTasks = validateAndNormaliseTasks(dedupResult.tasks as unknown[]);
+    // The dedup call returns only { title, description } to keep output tokens low.
+    // Re-merge: for each surviving title, look up the original full task from rawTasks.
+    // First occurrence wins when the same title appeared in multiple chunks.
+    // This also handles the fallback path where dedupResult.tasks === rawTasks (full objects).
+    const rawTaskByTitle = new Map<string, ExtractedTask>();
+    for (const t of rawTasks) {
+      if (!rawTaskByTitle.has(t.title.toLowerCase())) {
+        rawTaskByTitle.set(t.title.toLowerCase(), t);
+      }
+    }
+
+    const finalTasks = (dedupResult.tasks as Array<{ title: string }>)
+      .map((d) => rawTaskByTitle.get(d.title.toLowerCase()))
+      .filter((t): t is ExtractedTask => t !== undefined);
 
     logger.info(
       `dedupTranscripts: dedup complete for ${meetingId} — ` +
