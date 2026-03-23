@@ -80,4 +80,10 @@ export interface ProcessedTranscriptDocument {
   hasNotes?: boolean;
   /** Token usage from the AI extraction call. */
   tokensUsed?: { input: number; output: number };
+  /**
+   * Server timestamp set when the processor claims the document (status → "processing").
+   * Used to detect stuck transcripts: if "processing" for more than 15 minutes, the
+   * function likely crashed and the document can be safely requeued.
+   */
+  processingStartedAt?: Timestamp;
 }

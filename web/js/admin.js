@@ -783,7 +783,17 @@ function meetingRow(m) {
         .toLocaleDateString()
     : "—";
   const attendees = (m.attendeeEmails ?? []).length;
-  const canReprocess = m.status === "failed" || m.status === "awaiting_configuration";
+  const canReprocess = m.status === "failed" || m.status === "awaiting_configuration" || m.status === "processing";
+  let stuckLabel = "";
+  if (m.status === "processing" && m.processingStartedAt) {
+    const startedMs = m.processingStartedAt._seconds
+      ? m.processingStartedAt._seconds * 1000
+      : new Date(m.processingStartedAt).getTime();
+    const minutesAgo = Math.floor((Date.now() - startedMs) / 60000);
+    if (minutesAgo >= 5) {
+      stuckLabel = ` (stuck ${minutesAgo}m)`;
+    }
+  }
   const tokens = m.tokensUsed
     ? `${(m.tokensUsed.input + m.tokensUsed.output).toLocaleString()} tokens`
     : "—";
@@ -807,7 +817,8 @@ function meetingRow(m) {
         style="font-size:12px;padding:3px 8px;">View</button>
       ${canReprocess
         ? `<button class="btn btn-ghost reprocess-btn" data-meeting-id="${escHtml(m.id)}" data-title="${escHtml(m.meetingTitle)}"
-            style="font-size:12px;padding:3px 8px;color:#f97316;margin-left:4px;">Reprocess</button>`
+            title="${m.status === "processing" ? "Stuck in processing" + stuckLabel : "Reprocess this meeting"}"
+            style="font-size:12px;padding:3px 8px;color:#f97316;margin-left:4px;">Reprocess${escHtml(stuckLabel)}</button>`
         : ""}
     </td>
   </tr>

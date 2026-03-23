@@ -55,6 +55,7 @@ export const taskCreator = onDocumentUpdated(
       editedDescription,
       suggestedDueDate,
       editedDueDate,
+      asanaProjectId,
     } = after;
 
     const docRef = db()
@@ -100,6 +101,7 @@ export const taskCreator = onDocumentUpdated(
         sourceLink: driveFileLink,
         meetingTitle,
         meetingDate,
+        ...(asanaProjectId ? { asanaProjectId } : {}),
       };
 
       // ── Step 4: Route to all configured destinations ──────────────────────

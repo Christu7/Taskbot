@@ -26,6 +26,28 @@ let ownProposals     = [];   // proposals where isOwner === true (or PM/admin ac
 let activeUsers      = [];   // for reassign dropdown
 let isPrivilegedUser = false; // true if admin or project_manager
 
+// Asana project picker state — populated on boot if Asana is connected
+let asanaProjects        = [];   // [{ gid, name }]
+let defaultAsanaProjectId = null; // from user preferences
+let isAsanaConnected     = false;
+
+// ─── Asana project loader ─────────────────────────────────────────────────────
+
+async function loadAsanaProjects() {
+  try {
+    const settings = await api.getAsanaSettings();
+    if (!settings.connected) return;
+    isAsanaConnected = true;
+    defaultAsanaProjectId = settings.asanaProjectId || null;
+    if (settings.asanaWorkspaceId) {
+      const result = await api.getAsanaProjects(settings.asanaWorkspaceId);
+      asanaProjects = result.projects || [];
+    }
+  } catch {
+    // Non-fatal — review page still works without the dropdown
+  }
+}
+
 // ─── Boot ─────────────────────────────────────────────────────────────────────
 
 async function boot() {
@@ -44,7 +66,16 @@ async function bootFromToken(token) {
     await signInWithCustomToken(auth, result.customToken);
     currentMeetingId = result.meetingId;
     setupHeader(auth.currentUser);
-    renderPage(result.meetingTitle, result.driveFileLink, result.proposals);
+
+    // Load Asana projects in parallel — non-blocking, best-effort
+    await loadAsanaProjects();
+
+    const action = params.get("action");
+    if (action === "approve_all") {
+      renderApproveAllConfirmation(result.meetingTitle, result.driveFileLink, result.proposals);
+    } else {
+      renderPage(result.meetingTitle, result.driveFileLink, result.proposals);
+    }
   } catch (err) {
     const msg = (err.message || "").toLowerCase();
     if (msg.includes("expired")) {
@@ -78,6 +109,9 @@ async function bootFromAuth(meetingId) {
   const role = await getUserRole();
   isPrivilegedUser = role === "admin" || role === "project_manager";
 
+  // Load Asana projects in parallel — non-blocking, best-effort
+  await loadAsanaProjects();
+
   try {
     const result = await api.getMeetingProposals(meetingId);
     renderPage(result.meetingTitle, result.driveFileLink, result.proposals);
@@ -93,6 +127,144 @@ function setupHeader(user) {
     logoutBtn.addEventListener("click", () => signOutUser());
     initAdminNav();
   }
+}
+
+// ─── Approve-all confirmation ──────────────────────────────────────────────────
+
+function renderApproveAllConfirmation(meetingTitle, driveFileLink, allProposals) {
+  loadingEl.hidden = true;
+
+  const pending = (allProposals || []).filter((p) => p.status === "pending");
+
+  const confirmEl = document.createElement("div");
+  confirmEl.id = "approve-all-confirm";
+  confirmEl.style.cssText = "max-width:600px;margin:40px auto;padding:0 16px;";
+
+  if (pending.length === 0) {
+    confirmEl.innerHTML = `
+      <div style="text-align:center;padding:48px 24px;">
+        <div style="font-size:48px;margin-bottom:16px;">✓</div>
+        <h2 style="margin:0 0 8px;font-size:20px;">All done!</h2>
+        <p style="color:#6b7280;margin:0;">All tasks from this meeting have already been reviewed.</p>
+        <a href="/dashboard" class="btn btn-primary" style="margin-top:24px;display:inline-block;">
+          Go to Dashboard
+        </a>
+      </div>
+    `;
+    contentEl.parentNode.insertBefore(confirmEl, contentEl);
+    return;
+  }
+
+  const projectOptions = asanaProjects.map((p) =>
+    `<option value="${esc(p.gid)}"${p.gid === defaultAsanaProjectId ? " selected" : ""}>${esc(p.name)}</option>`
+  ).join("");
+
+  const taskListHtml = pending.map((p) => `
+    <div style="padding:12px 0;border-bottom:1px solid #f3f4f6;">
+      <div style="display:flex;align-items:flex-start;gap:12px;">
+        <span class="confidence confidence-${esc(p.confidence || "medium")}" style="flex-shrink:0;">${esc(p.confidence || "medium")}</span>
+        <div style="flex:1;min-width:0;">
+          <div style="font-weight:500;font-size:14px;">${esc(p.editedTitle || p.title || "Untitled")}</div>
+          ${p.assigneeName
+            ? `<div style="font-size:12px;color:#6b7280;">${esc(p.assigneeName)}${p.assigneeEmail ? " · " + esc(p.assigneeEmail) : ""}</div>`
+            : ""}
+          ${isAsanaConnected && asanaProjects.length > 0
+            ? `<div style="margin-top:6px;display:flex;align-items:center;gap:8px;">
+                 <label style="font-size:12px;color:#6b7280;white-space:nowrap;" for="confirm-asana-project-${esc(p.id)}">Asana Project:</label>
+                 <select id="confirm-asana-project-${esc(p.id)}" style="font-size:12px;padding:2px 4px;border:1px solid #d1d5db;border-radius:4px;flex:1;min-width:0;">
+                   ${projectOptions}
+                 </select>
+               </div>`
+            : ""}
+        </div>
+      </div>
+    </div>
+  `).join("");
+
+  confirmEl.innerHTML = `
+    <div style="margin-bottom:4px;">
+      <h2 style="margin:0 0 4px;font-size:20px;">${esc(meetingTitle || "Meeting Review")}</h2>
+      ${driveFileLink
+        ? `<a href="${esc(driveFileLink)}" target="_blank" rel="noopener"
+             style="font-size:13px;color:#2563eb;text-decoration:none;">View transcript ↗</a>`
+        : ""}
+    </div>
+
+    <div style="margin:20px 0;padding:16px 20px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;">
+      <p style="margin:0 0 6px;font-size:15px;font-weight:500;color:#166534;">
+        You're about to approve all ${pending.length} pending task${pending.length !== 1 ? "s" : ""} from this meeting.
+      </p>
+      <p style="margin:0;font-size:13px;color:#166534;">
+        Review the list below and click Confirm to approve all, or review them individually.
+      </p>
+    </div>
+
+    <div style="border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;margin-bottom:20px;">
+      <div style="padding:10px 16px;background:#f9fafb;border-bottom:1px solid #e5e7eb;font-size:13px;font-weight:500;color:#374151;">
+        ${pending.length} Pending Task${pending.length !== 1 ? "s" : ""}
+      </div>
+      <div style="padding:0 16px;">${taskListHtml}</div>
+    </div>
+
+    <div style="display:flex;gap:12px;">
+      <button id="confirm-approve-all-btn" class="btn btn-approve" style="flex:1;">
+        Confirm Approve All
+      </button>
+      <button id="review-individually-btn" class="btn btn-ghost" style="flex:1;">
+        Review Individually
+      </button>
+    </div>
+
+    <div id="approve-all-result" hidden
+         style="margin-top:16px;text-align:center;padding:16px;background:#f0fdf4;
+                border:1px solid #bbf7d0;border-radius:8px;color:#166534;font-weight:500;">
+    </div>
+  `;
+
+  contentEl.parentNode.insertBefore(confirmEl, contentEl);
+
+  document.getElementById("confirm-approve-all-btn").addEventListener("click", async () => {
+    const confirmBtn = document.getElementById("confirm-approve-all-btn");
+    const reviewBtn  = document.getElementById("review-individually-btn");
+    confirmBtn.disabled = true;
+    confirmBtn.textContent = "Approving…";
+    reviewBtn.disabled = true;
+
+    // Collect per-task Asana project overrides from the confirmation dialog
+    let taskOverrides;
+    if (isAsanaConnected && asanaProjects.length > 0) {
+      taskOverrides = {};
+      pending.forEach((p) => {
+        const sel = document.getElementById(`confirm-asana-project-${p.id}`);
+        if (sel && sel.value) taskOverrides[p.id] = { asanaProjectId: sel.value };
+      });
+      if (Object.keys(taskOverrides).length === 0) taskOverrides = undefined;
+    }
+
+    try {
+      const { updated } = await api.bulkAction(currentMeetingId, "approve", taskOverrides);
+      const resultEl = document.getElementById("approve-all-result");
+      resultEl.textContent = `✓ ${updated} task${updated !== 1 ? "s" : ""} approved successfully.`;
+      resultEl.hidden = false;
+      confirmBtn.hidden = true;
+      reviewBtn.hidden = true;
+    } catch (err) {
+      showToast("Bulk approve failed: " + err.message, "error");
+      confirmBtn.disabled = false;
+      confirmBtn.textContent = "Confirm Approve All";
+      reviewBtn.disabled = false;
+    }
+  });
+
+  document.getElementById("review-individually-btn").addEventListener("click", () => {
+    // Remove action param from URL so the normal page behaves as expected
+    const url = new URL(location.href);
+    url.searchParams.delete("action");
+    history.replaceState(null, "", url.toString());
+
+    confirmEl.remove();
+    renderPage(meetingTitle, driveFileLink, allProposals);
+  });
 }
 
 // ─── Render page ───────────────────────────────────────────────────────────────
@@ -216,7 +388,17 @@ function buildCard(proposal) {
              <label class="due-label" for="due-${proposal.id}">Deadline:</label>
              <input type="date" id="due-${proposal.id}" class="due-input"
                     value="${esc(proposal.editedDueDate || proposal.suggestedDueDate || '')}">
-           </div>`
+           </div>
+           ${isAsanaConnected && asanaProjects.length > 0
+             ? `<div class="due-date-row">
+                  <label class="due-label" for="asana-project-${proposal.id}">Asana Project:</label>
+                  <select id="asana-project-${proposal.id}" class="due-input">
+                    ${asanaProjects.map((p) =>
+                      `<option value="${esc(p.gid)}"${p.gid === defaultAsanaProjectId ? " selected" : ""}>${esc(p.name)}</option>`
+                    ).join("")}
+                  </select>
+                </div>`
+             : ""}`
         : (proposal.editedDueDate || proposal.suggestedDueDate)
           ? `<div class="due-date">Due: ${esc(proposal.editedDueDate || proposal.suggestedDueDate)}</div>`
           : ""}
@@ -431,6 +613,12 @@ async function applyAction(card, proposalId, action, title, description) {
     dueInput.disabled = true;
   }
 
+  const asanaProjectSelect = document.getElementById(`asana-project-${proposalId}`);
+  if (asanaProjectSelect) {
+    body.asanaProjectId = asanaProjectSelect.value || defaultAsanaProjectId || undefined;
+    asanaProjectSelect.disabled = true;
+  }
+
   card.querySelectorAll(".btn").forEach((b) => b.disabled = true);
 
   try {
@@ -538,8 +726,19 @@ async function bulkAction(action) {
   approveAll.disabled = true;
   rejectAll.disabled  = true;
 
+  // Collect per-task Asana project overrides from any visible dropdowns
+  let taskOverrides;
+  if (action === "approve" && isAsanaConnected && asanaProjects.length > 0) {
+    taskOverrides = {};
+    ownProposals.filter((p) => p.status === "pending").forEach((p) => {
+      const sel = document.getElementById(`asana-project-${p.id}`);
+      if (sel && sel.value) taskOverrides[p.id] = { asanaProjectId: sel.value };
+    });
+    if (Object.keys(taskOverrides).length === 0) taskOverrides = undefined;
+  }
+
   try {
-    const { updated } = await api.bulkAction(currentMeetingId, action);
+    const { updated } = await api.bulkAction(currentMeetingId, action, taskOverrides);
     const finalStatus = action === "approve" ? "approved" : "rejected";
 
     ownProposals.forEach((p) => {

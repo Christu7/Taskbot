@@ -41,9 +41,13 @@ export const api = {
   updateProposal: (meetingId, taskId, body) =>
     request("PATCH", `/proposals/${meetingId}/${taskId}`, body),
 
-  /** Bulk approve or reject all pending proposals for a meeting. */
-  bulkAction: (meetingId, action) =>
-    request("PATCH", `/proposals/${meetingId}/bulk`, { action }),
+  /** Bulk approve or reject all pending proposals for a meeting.
+   *  taskOverrides: optional map of taskId → { asanaProjectId } for per-task routing. */
+  bulkAction: (meetingId, action, taskOverrides) =>
+    request("PATCH", `/proposals/${meetingId}/bulk`, {
+      action,
+      ...(taskOverrides ? { taskOverrides } : {}),
+    }),
 
   /** Returns a single proposal by ID. Used for polling after approval. */
   getProposal: (meetingId, taskId) =>

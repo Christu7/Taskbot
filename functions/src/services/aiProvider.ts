@@ -29,6 +29,15 @@ export interface AIProvider {
    * @returns Extracted tasks and token usage counts
    */
   extractTasks(transcript: string, context: MeetingContext): Promise<AIExtractionResult>;
+
+  /**
+   * Deduplicate a flat list of tasks collected from multiple transcript chunks.
+   * The model removes exact and near-duplicate entries and returns the cleaned array.
+   *
+   * @param tasks - Raw task objects from one or more chunk extraction calls
+   * @returns Deduplicated task array and token usage counts
+   */
+  deduplicateTasks(tasks: ExtractedTask[]): Promise<AIExtractionResult>;
 }
 
 // ─── JSON parsing helpers ─────────────────────────────────────────────────────
@@ -159,6 +168,34 @@ export class AnthropicProvider implements AIProvider {
       };
     } catch (err) {
       throw new AIExtractionError("anthropic", (err as Error).message);
+    }
+  }
+
+  async deduplicateTasks(tasks: ExtractedTask[]): Promise<AIExtractionResult> {
+    const client = await this.getClient();
+    const prompt =
+      "The following tasks were extracted from different segments of the same meeting. " +
+      "Remove exact duplicates and near-duplicates. Return a clean deduplicated JSON array " +
+      "of tasks in the same format, inside a ```json code block.\n\n" +
+      "Tasks: " + JSON.stringify(tasks);
+
+    const response = await client.messages.create({
+      model: this.model,
+      max_tokens: 4096,
+      messages: [{ role: "user", content: prompt }],
+    });
+
+    const text = this.extractText(response);
+    try {
+      return {
+        tasks: parseRawResponse(text) as ExtractedTask[],
+        tokensUsed: {
+          input: response.usage.input_tokens,
+          output: response.usage.output_tokens,
+        },
+      };
+    } catch (err) {
+      throw new AIExtractionError("anthropic", `Dedup parse failed: ${(err as Error).message}`);
     }
   }
 

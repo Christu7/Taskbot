@@ -11,6 +11,7 @@ import { getMaskedSecrets, setSecrets, getSecret } from "../services/secrets";
 import { getValidAccessToken } from "../auth";
 import { sendInviteEmail } from "../services/emailSender";
 import { logActivity } from "../services/activityLogger";
+import { fetchWithTimeout } from "../utils/fetchWithTimeout";
 
 // pmRouter: routes accessible to project_manager OR admin
 const pmRouter = Router();
@@ -304,8 +305,8 @@ router.put("/secrets", async (req: Request, res: Response) => {
 
   // Validate ai.provider if provided
   const aiProvider = (body.ai as Record<string, unknown> | undefined)?.provider;
-  if (aiProvider !== undefined && !["anthropic", "openai", "gemini"].includes(aiProvider as string)) {
-    res.status(400).json({ error: "ai.provider must be \"anthropic\", \"openai\", or \"gemini\"" });
+  if (aiProvider !== undefined && !["anthropic", "openai"].includes(aiProvider as string)) {
+    res.status(400).json({ error: "ai.provider must be \"anthropic\" or \"openai\"" });
     return;
   }
 
@@ -378,13 +379,13 @@ router.post("/secrets/test", async (_req: Request, res: Response) => {
   // ── Slack test ─────────────────────────────────────────────────────────────
   try {
     const botToken = await getSecret("slack.botToken");
-    const resp = await fetch("https://slack.com/api/auth.test", {
+    const resp = await fetchWithTimeout("https://slack.com/api/auth.test", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${botToken}`,
         "Content-Type": "application/json",
       },
-    });
+    }, 10_000);
     const data = await resp.json() as { ok: boolean; team?: string; error?: string };
     if (data.ok) {
       results.slack = { status: "ok", team: data.team };
@@ -422,9 +423,9 @@ router.post("/secrets/test", async (_req: Request, res: Response) => {
       const accessToken = (tokenSnap.data() as { access_token?: string })?.access_token;
       if (!accessToken) continue;
 
-      const resp = await fetch("https://app.asana.com/api/1.0/users/me", {
+      const resp = await fetchWithTimeout("https://app.asana.com/api/1.0/users/me", {
         headers: { Authorization: `Bearer ${accessToken}` },
-      });
+      }, 10_000);
       if (resp.ok) {
         results.asana = { status: "ok", message: "Asana API reachable" };
       } else {
@@ -660,9 +661,23 @@ pmRouter.post("/meetings/:meetingId/reprocess", async (req: Request, res: Respon
   }
 
   const data = snap.data() as Record<string, unknown>;
-  if (!["failed", "awaiting_configuration"].includes(data.status as string)) {
-    res.status(400).json({ error: "Only failed or awaiting_configuration meetings can be reprocessed" });
+  if (!["failed", "awaiting_configuration", "processing"].includes(data.status as string)) {
+    res.status(400).json({ error: "Only failed, awaiting_configuration, or stuck processing meetings can be reprocessed" });
     return;
+  }
+
+  // Staleness guard: prevent reprocessing a transcript that's genuinely in-flight.
+  // A "processing" document updated less than 5 minutes ago is assumed to be active.
+  if (data.status === "processing") {
+    const processingStartedAt = data.processingStartedAt as Timestamp | undefined;
+    const startedMs = processingStartedAt?.toMillis() ?? 0;
+    const stuckThresholdMs = 5 * 60 * 1000; // 5 minutes
+    if (Date.now() - startedMs < stuckThresholdMs) {
+      res.status(400).json({
+        error: "Transcript is currently being processed. Try again in a few minutes.",
+      });
+      return;
+    }
   }
 
   // Delete existing proposals for this meeting

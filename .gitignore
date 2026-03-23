@@ -39,3 +39,4 @@ service-account*.json
 logs/
 *.log
 taskbotserviceAccountKey.json
+web/js/firebase-config.js

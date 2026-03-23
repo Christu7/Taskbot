@@ -2,6 +2,7 @@ import * as admin from "firebase-admin";
 import { onRequest } from "firebase-functions/v2/https";
 import { logger } from "firebase-functions";
 import Anthropic from "@anthropic-ai/sdk";
+import { fetchWithTimeout } from "../utils/fetchWithTimeout";
 
 type ServiceStatus = { status: "ok" | "warn" | "error"; detail?: string };
 
@@ -90,7 +91,7 @@ export const healthCheck = onRequest(
 
     // ── Google APIs (connectivity) ─────────────────────────────────────────
     try {
-      const resp = await fetch("https://www.googleapis.com/", { method: "HEAD" });
+      const resp = await fetchWithTimeout("https://www.googleapis.com/", { method: "HEAD" }, 10_000);
       // googleapis returns 404 for the root — that still means we can reach it
       services.googleApis = resp.ok || resp.status === 404
         ? { status: "ok" }

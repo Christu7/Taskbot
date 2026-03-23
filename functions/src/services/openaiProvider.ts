@@ -99,6 +99,34 @@ export class OpenAIProvider implements AIProvider {
     }
   }
 
+  async deduplicateTasks(tasks: ExtractedTask[]): Promise<AIExtractionResult> {
+    const client = await this.getClient();
+    const prompt =
+      "The following tasks were extracted from different segments of the same meeting. " +
+      "Remove exact duplicates and near-duplicates. Return a clean deduplicated JSON array " +
+      "of tasks in the same format, inside a ```json code block.\n\n" +
+      "Tasks: " + JSON.stringify(tasks);
+
+    const response = await client.chat.completions.create({
+      model: this.model,
+      max_tokens: 4096,
+      messages: [{ role: "user", content: prompt }],
+    });
+
+    const text = response.choices[0]?.message?.content ?? "";
+    try {
+      return {
+        tasks: this.parseResponse(text),
+        tokensUsed: {
+          input: response.usage?.prompt_tokens ?? 0,
+          output: response.usage?.completion_tokens ?? 0,
+        },
+      };
+    } catch (err) {
+      throw new AIExtractionError("openai", `Dedup parse failed: ${(err as Error).message}`);
+    }
+  }
+
   private parseResponse(text: string): ExtractedTask[] {
     const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
     const jsonStr = fenced ? fenced[1].trim() : text.match(/\[[\s\S]*\]/)?.[0];

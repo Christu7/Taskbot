@@ -14,12 +14,15 @@ const ARCHIVABLE_STATUSES = new Set(["rejected", "created", "expired", "failed"]
 /**
  * Scheduled Cloud Function: expireProposals
  *
- * Runs every hour. Performs three cleanup tasks:
+ * Runs every hour. Performs four cleanup tasks:
  *
  * 1. Expire pending proposals whose expiresAt timestamp is in the past.
  * 2. Delete expired approval tokens (single-use email links past their TTL).
  * 3. Archive resolved proposals older than 30 days (status → "archived")
  *    so the active queries stay fast.
+ * 4. Reset transcripts stuck in "processing" for more than 15 minutes.
+ *    These indicate a function crash mid-pipeline; they are marked "failed"
+ *    so admins can reprocess them from the Meetings tab.
  */
 export const expireProposals = onSchedule(
   {
@@ -35,6 +38,7 @@ export const expireProposals = onSchedule(
       expirePendingProposals(now),
       deleteExpiredTokens(now),
       archiveOldProposals(),
+      resetStuckTranscripts(now),
     ]);
   }
 );
@@ -90,6 +94,48 @@ async function deleteExpiredTokens(now: Timestamp): Promise<void> {
   }
 
   logger.info(`expireProposals: deleted ${deleted} expired approval token(s)`);
+}
+
+// ─── Task 4: Reset transcripts stuck in "processing" ─────────────────────────
+
+/**
+ * Finds processedTranscripts documents that have been in "processing" for more
+ * than 15 minutes and marks them "failed". This recovers from Cloud Function
+ * crashes that leave the status permanently stuck, preventing admin visibility
+ * and blocking reprocessing.
+ *
+ * Stuck transcripts will appear in the Meetings tab with status "failed" and
+ * a descriptive error message, allowing admins to reprocess them.
+ */
+async function resetStuckTranscripts(now: Timestamp): Promise<void> {
+  const stuckThreshold = Timestamp.fromMillis(now.toMillis() - 15 * 60 * 1000);
+
+  const snap = await admin
+    .firestore()
+    .collection("processedTranscripts")
+    .where("status", "==", "processing")
+    .where("processingStartedAt", "<", stuckThreshold)
+    .get();
+
+  if (snap.empty) {
+    logger.info("expireProposals: no stuck transcripts to reset");
+    return;
+  }
+
+  let reset = 0;
+  for (let i = 0; i < snap.docs.length; i += BATCH_SIZE) {
+    const batch = admin.firestore().batch();
+    snap.docs.slice(i, i + BATCH_SIZE).forEach((doc) => {
+      batch.update(doc.ref, {
+        status: "failed",
+        error: "Processing timed out — function may have crashed. Use the admin panel to reprocess.",
+      });
+    });
+    await batch.commit();
+    reset += Math.min(BATCH_SIZE, snap.docs.length - i);
+  }
+
+  logger.info(`expireProposals: reset ${reset} stuck transcript(s) from "processing" to "failed"`);
 }
 
 // ─── Task 3: Archive resolved proposals older than 30 days ───────────────────

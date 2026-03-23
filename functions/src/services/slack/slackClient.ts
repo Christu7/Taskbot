@@ -3,6 +3,8 @@
  * Covers the subset of endpoints TaskBot needs.
  */
 
+import { fetchWithTimeout } from "../../utils/fetchWithTimeout";
+
 const BASE = "https://slack.com/api";
 
 // ─── Response shapes ──────────────────────────────────────────────────────────
@@ -92,14 +94,14 @@ async function slackPost<T extends SlackBaseResponse>(
   token: string,
   body: Record<string, unknown>
 ): Promise<T> {
-  const res = await fetch(`${BASE}/${method}`, {
+  const res = await fetchWithTimeout(`${BASE}/${method}`, {
     method: "POST",
     headers: {
       "Authorization": `Bearer ${token}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify(body),
-  });
+  }, 10_000);
 
   if (!res.ok) {
     throw new Error(`Slack API ${method} HTTP ${res.status}`);
@@ -179,9 +181,10 @@ export async function lookupUserByEmail(
   token: string,
   email: string
 ): Promise<{ id: string; displayName: string } | null> {
-  const res = await fetch(
+  const res = await fetchWithTimeout(
     `${BASE}/users.lookupByEmail?email=${encodeURIComponent(email)}`,
-    { headers: { "Authorization": `Bearer ${token}` } }
+    { headers: { "Authorization": `Bearer ${token}` } },
+    10_000
   );
 
   if (!res.ok) {
@@ -213,11 +216,11 @@ export async function postToResponseUrl(
   responseUrl: string,
   body: Record<string, unknown>
 ): Promise<void> {
-  const res = await fetch(responseUrl, {
+  const res = await fetchWithTimeout(responseUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
-  });
+  }, 10_000);
 
   if (!res.ok) {
     throw new Error(`Slack response_url POST failed: HTTP ${res.status}`);

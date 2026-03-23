@@ -32,13 +32,22 @@ export class SlackChannel implements NotificationChannel {
       return;
     }
 
-    await sendSlackProposalNotification(
-      botToken,
-      slackUserId,
-      ctx.proposals,
-      ctx.meetingTitle,
-      ctx.reviewLink,
-      ctx.expiryHours
-    );
+    try {
+      await sendSlackProposalNotification(
+        botToken,
+        slackUserId,
+        ctx.proposals,
+        ctx.meetingTitle,
+        ctx.reviewLink,
+        ctx.expiryHours
+      );
+    } catch (err) {
+      logger.warn(
+        `SlackChannel: Slack notification failed for ${ctx.user.email}, falling back to email: ${(err as Error).message}`
+      );
+      // Let the email fallback exception propagate — it will be caught by
+      // Promise.allSettled in notificationRouter and logged as a channel failure.
+      await new EmailChannel().send(ctx);
+    }
   }
 }

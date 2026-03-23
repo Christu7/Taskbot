@@ -3,6 +3,8 @@
  * Docs: https://developers.asana.com/reference/rest-api-reference
  */
 
+import { fetchWithTimeout } from "../../utils/fetchWithTimeout";
+
 const BASE = "https://app.asana.com/api/1.0";
 
 // ─── Response shapes ──────────────────────────────────────────────────────────
@@ -45,7 +47,7 @@ async function asanaRequest<T>(
   path: string,
   body?: Record<string, unknown>
 ): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
+  const res = await fetchWithTimeout(`${BASE}${path}`, {
     method,
     headers: {
       "Authorization": `Bearer ${accessToken}`,

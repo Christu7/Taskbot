@@ -103,6 +103,19 @@ async function getTasksToSync(uid: string): Promise<SyncableTask[]> {
       // The PATCH /tasks endpoint sets syncStatus="pending_sync" on every edit.
       // Overwriting those edits with external data would silently discard changes.
       if (data.syncStatus === "pending_sync") return false;
+      // Skip sync_error tasks that have been failing for more than 24 hours —
+      // persistent failures indicate a structural problem (deleted integration,
+      // revoked token) that won't self-heal. Log and wait for manual intervention.
+      if (data.syncStatus === "sync_error") {
+        const twentyFourHoursAgo = Timestamp.fromMillis(Date.now() - 24 * 60 * 60 * 1000);
+        if (data.lastSyncedAt && data.lastSyncedAt.toMillis() < twentyFourHoursAgo.toMillis()) {
+          logger.warn(`syncEngine: skipping task ${d.id} — stuck in sync_error for more than 24 hours`, {
+            taskId: d.id,
+            lastSyncedAt: data.lastSyncedAt.toDate().toISOString(),
+          });
+          return false;
+        }
+      }
       return true;
     })
     .map((d) => ({

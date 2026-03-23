@@ -12,6 +12,11 @@ export interface TaskData {
   sourceLink: string;
   meetingTitle: string;
   meetingDate: string;
+  /**
+   * Per-task Asana project GID override. When set, AsanaDestination uses this
+   * instead of the user's default asanaProjectId preference.
+   */
+  asanaProjectId?: string;
 }
 
 /** Reference to a task that was created in an external system. */

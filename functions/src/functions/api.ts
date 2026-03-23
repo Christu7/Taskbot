@@ -4,7 +4,7 @@ import { onRequest } from "firebase-functions/v2/https";
 import { logger } from "firebase-functions";
 import { FieldValue } from "firebase-admin/firestore";
 import express, { Request, Response, NextFunction } from "express";
-import { validateApprovalToken, markApprovalTokenUsed, generateApprovalToken } from "../services/approvalTokens";
+import { validateAndConsumeToken, generateApprovalToken } from "../services/approvalTokens";
 import { getUser, updateUser } from "../services/firestore";
 import { ProposalDocument } from "../models/proposal";
 import { UserPreferences, UserDocument, normalizeNotifyVia, normalizeTaskDestination } from "../models/user";
@@ -66,7 +66,9 @@ app.post("/auth/validate-token", async (req: Request, res: Response) => {
   }
 
   try {
-    const { uid, meetingId } = await validateApprovalToken(token);
+    // Atomically validate and consume the token in a single Firestore transaction.
+    // Any concurrent request with the same token will fail after this point.
+    const { uid, meetingId } = await validateAndConsumeToken(token);
 
     const [userSnap, transcriptSnap] = await Promise.all([
       db().collection("users").doc(uid).get(),
@@ -91,11 +93,10 @@ app.post("/auth/validate-token", async (req: Request, res: Response) => {
     const meetingTitle = transcriptSnap.data()?.meetingTitle ?? meetingId;
     const driveFileLink = transcriptSnap.data()?.driveFileLink ?? null;
 
-    // Create a short-lived custom Firebase token for the client to sign in with
+    // Create a short-lived custom Firebase token for the client to sign in with.
+    // The approval token is already consumed above — concurrent requests will fail
+    // the transaction even if they arrive before this custom token is issued.
     const customToken = await admin.auth().createCustomToken(uid);
-
-    // Mark the approval token as used — client is now signed in via Firebase
-    await markApprovalTokenUsed(token);
 
     res.json({ customToken, meetingId, meetingTitle, driveFileLink, proposals });
   } catch (err) {
@@ -249,7 +250,10 @@ app.patch(
   async (req: Request, res: Response) => {
     const uid = (req as AuthRequest).uid;
     const { meetingId } = req.params;
-    const { action } = req.body as { action?: "approve" | "reject" };
+    const { action, taskOverrides } = req.body as {
+      action?: "approve" | "reject";
+      taskOverrides?: Record<string, { asanaProjectId?: string }>;
+    };
 
     if (action !== "approve" && action !== "reject") {
       res.status(400).json({ error: "action must be 'approve' or 'reject'" });
@@ -271,7 +275,10 @@ app.patch(
 
     const batch = db().batch();
     snap.docs.forEach((d) => {
-      batch.update(d.ref, { status, reviewedAt: FieldValue.serverTimestamp() });
+      const update: Record<string, unknown> = { status, reviewedAt: FieldValue.serverTimestamp() };
+      const override = taskOverrides?.[d.id];
+      if (override?.asanaProjectId !== undefined) update.asanaProjectId = override.asanaProjectId;
+      batch.update(d.ref, update);
     });
     await batch.commit();
 
@@ -293,11 +300,12 @@ app.patch(
   async (req: Request, res: Response) => {
     const uid = (req as AuthRequest).uid;
     const { meetingId, taskId } = req.params;
-    const { status, title, description, dueDate } = req.body as {
+    const { status, title, description, dueDate, asanaProjectId } = req.body as {
       status?: string;
       title?: string;
       description?: string;
       dueDate?: string | null;
+      asanaProjectId?: string;
     };
 
     const validStatuses = ["approved", "rejected", "edited"];
@@ -342,6 +350,9 @@ app.patch(
 
     // Store user-edited due date if provided (null clears any previously set value)
     if (dueDate !== undefined) update.editedDueDate = dueDate;
+
+    // Store per-task Asana project override if provided
+    if (asanaProjectId !== undefined) update.asanaProjectId = asanaProjectId;
 
     // Use a transaction to guard against the expiry race condition:
     // expireProposals could mark this "expired" between our .get() and the write.
@@ -896,31 +907,48 @@ app.patch(
 
     await docRef.update(update);
 
+    // Use the task owner's tokens for external updates, not the caller's.
+    // An admin/PM editing another user's task must still act via the owner's account.
+    const taskOwnerUid = (task.assigneeUid as string | undefined) ?? uid;
+    let syncWarning: string | undefined;
+
     // Propagate title/description/dueDate to external systems
     if (task.externalRefs?.length && (title !== undefined || description !== undefined || dueDate !== undefined)) {
       try {
-        const accessToken = await getValidAccessToken(uid);
-        await updateExternalRefs(uid, task.externalRefs, accessToken, {
+        const accessToken = await getValidAccessToken(taskOwnerUid);
+        await updateExternalRefs(taskOwnerUid, task.externalRefs, accessToken, {
           ...(title !== undefined && { title }),
           ...(description !== undefined && { description }),
           ...(dueDate !== undefined && { dueDate: dueDate ?? undefined }),
         });
       } catch (err) {
+        const msg = (err as Error).message;
+        const isTokenUnavailable = /no .* tokens found|expired and no refresh/i.test(msg);
         logger.warn(`tasks PATCH: external update failed for ${taskId}`, err);
+        await docRef.update({ syncStatus: "sync_error", syncError: msg });
+        syncWarning = isTokenUnavailable
+          ? "External update skipped — task owner's Google account is disconnected"
+          : "External update failed — will retry on next sync cycle";
       }
     }
 
     // Mark complete in external systems
     if (status === "completed" && task.externalRefs?.length) {
       try {
-        const accessToken = await getValidAccessToken(uid);
-        await completeExternalRefs(uid, task.externalRefs, accessToken);
+        const accessToken = await getValidAccessToken(taskOwnerUid);
+        await completeExternalRefs(taskOwnerUid, task.externalRefs, accessToken);
       } catch (err) {
+        const msg = (err as Error).message;
+        const isTokenUnavailable = /no .* tokens found|expired and no refresh/i.test(msg);
         logger.warn(`tasks PATCH: external complete failed for ${taskId}`, err);
+        await docRef.update({ syncStatus: "sync_error", syncError: msg });
+        syncWarning = syncWarning ?? (isTokenUnavailable
+          ? "External update skipped — task owner's Google account is disconnected"
+          : "External update failed — will retry on next sync cycle");
       }
     }
 
-    res.json({ success: true });
+    res.json(syncWarning ? { success: true, syncWarning } : { success: true });
   }
 );
 

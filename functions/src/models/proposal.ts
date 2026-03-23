@@ -62,6 +62,11 @@ export interface ProposalDocument {
   /** User-edited due date (overrides suggestedDueDate when set). ISO 8601 date string. */
   editedDueDate?: string | null;
   /**
+   * Asana project GID override chosen by the reviewer before approval.
+   * When set, this takes precedence over the user's default asanaProjectId preference.
+   */
+  asanaProjectId?: string;
+  /**
    * External task references, one entry per destination.
    * Populated after the task is created (status = "created").
    */

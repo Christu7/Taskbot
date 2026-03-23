@@ -18,6 +18,8 @@
 import * as admin from "firebase-admin";
 import { logger } from "firebase-functions";
 import { getSecret } from "../secrets";
+import { encrypt, decrypt } from "../kms";
+import { fetchWithTimeout } from "../../utils/fetchWithTimeout";
 
 const ASANA_TOKEN_URL = "https://app.asana.com/-/oauth_token";
 const EXPIRY_BUFFER_MS = 5 * 60 * 1000;
@@ -28,7 +30,13 @@ export interface AsanaStoredTokens {
   /** Unix timestamp (ms) when the access token expires. */
   expires_at: number | null;
   token_type: string;
-  updated_at: FirebaseFirestore.Timestamp;
+  updated_at?: FirebaseFirestore.Timestamp; // absent in encrypted format
+}
+
+// Shape of the Firestore document in the new encrypted format
+interface EncryptedTokenDoc {
+  data: string; // base64 KMS ciphertext of the JSON token payload
+  encryptedAt: FirebaseFirestore.Timestamp;
 }
 
 function tokenDocRef(uid: string): FirebaseFirestore.DocumentReference {
@@ -47,6 +55,12 @@ interface AsanaTokenResponse {
   token_type?: string;
 }
 
+/**
+ * Persists a user's Asana OAuth tokens in Firestore as a KMS-encrypted blob.
+ *
+ * If the incoming tokens do not include a refresh_token, the existing stored
+ * refresh_token is read and preserved.
+ */
 export async function saveAsanaTokens(
   uid: string,
   tokens: AsanaTokenResponse
@@ -55,22 +69,73 @@ export async function saveAsanaTokens(
     ? Date.now() + tokens.expires_in * 1000
     : null;
 
-  await tokenDocRef(uid).set(
-    {
-      access_token: tokens.access_token,
-      ...(tokens.refresh_token ? { refresh_token: tokens.refresh_token } : {}),
-      expires_at,
-      token_type: tokens.token_type ?? "Bearer",
-      updated_at: admin.firestore.FieldValue.serverTimestamp(),
-    },
-    { merge: true }
-  );
+  // Preserve the existing refresh_token if not returned by Asana
+  let refreshToken = tokens.refresh_token ?? null;
+  if (!refreshToken) {
+    const existing = await getAsanaTokens(uid);
+    refreshToken = existing?.refresh_token ?? null;
+  }
+
+  const payload = {
+    access_token: tokens.access_token,
+    refresh_token: refreshToken,
+    expires_at,
+    token_type: tokens.token_type ?? "Bearer",
+  };
+
+  const encrypted = await encrypt(JSON.stringify(payload));
+  await tokenDocRef(uid).set({
+    data: encrypted,
+    encryptedAt: admin.firestore.FieldValue.serverTimestamp(),
+  } as EncryptedTokenDoc);
 }
 
+/**
+ * Retrieves stored Asana tokens for a user, decrypting the KMS ciphertext.
+ *
+ * Handles lazy migration: if the stored document is in the old plaintext
+ * format, it is re-encrypted in place before returning.
+ *
+ * Returns null if the user has never connected Asana.
+ */
 export async function getAsanaTokens(uid: string): Promise<AsanaStoredTokens | null> {
   const snap = await tokenDocRef(uid).get();
   if (!snap.exists) return null;
-  return snap.data() as AsanaStoredTokens;
+
+  const raw = snap.data()!;
+
+  // New encrypted format: document has a single "data" ciphertext string
+  if (typeof raw.data === "string") {
+    const decrypted = await decrypt(raw.data as string);
+    return JSON.parse(decrypted) as AsanaStoredTokens;
+  }
+
+  // Old plaintext format — migrate in place before returning
+  const oldTokens = raw as AsanaStoredTokens;
+  logger.info("asanaAuth: migrating plaintext Asana tokens to KMS-encrypted format", { uid });
+
+  const payload = {
+    access_token: oldTokens.access_token ?? null,
+    refresh_token: oldTokens.refresh_token ?? null,
+    expires_at: oldTokens.expires_at ?? null,
+    token_type: oldTokens.token_type ?? "Bearer",
+  };
+
+  try {
+    const encrypted = await encrypt(JSON.stringify(payload));
+    await tokenDocRef(uid).set({
+      data: encrypted,
+      encryptedAt: admin.firestore.FieldValue.serverTimestamp(),
+    } as EncryptedTokenDoc);
+    logger.info("asanaAuth: Asana token migration complete", { uid });
+  } catch (err) {
+    logger.warn("asanaAuth: lazy migration failed — tokens remain plaintext", {
+      uid,
+      error: (err as Error).message,
+    });
+  }
+
+  return oldTokens;
 }
 
 export async function deleteAsanaTokens(uid: string): Promise<void> {
@@ -78,8 +143,8 @@ export async function deleteAsanaTokens(uid: string): Promise<void> {
 }
 
 export async function isAsanaConnected(uid: string): Promise<boolean> {
-  const snap = await tokenDocRef(uid).get();
-  return snap.exists && Boolean((snap.data() as AsanaStoredTokens | undefined)?.access_token);
+  const tokens = await getAsanaTokens(uid);
+  return Boolean(tokens?.access_token);
 }
 
 /**
@@ -119,7 +184,7 @@ export async function getValidAsanaAccessToken(uid: string): Promise<string> {
     refresh_token: stored.refresh_token,
   });
 
-  const res = await fetch(ASANA_TOKEN_URL, {
+  const res = await fetchWithTimeout(ASANA_TOKEN_URL, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: params.toString(),
@@ -174,7 +239,7 @@ export async function exchangeAsanaCode(code: string): Promise<AsanaTokenRespons
     code,
   });
 
-  const res = await fetch(ASANA_TOKEN_URL, {
+  const res = await fetchWithTimeout(ASANA_TOKEN_URL, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: params.toString(),

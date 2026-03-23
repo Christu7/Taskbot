@@ -1,6 +1,6 @@
 import * as admin from "firebase-admin";
 import { onDocumentCreated } from "firebase-functions/v2/firestore";
-import { Timestamp } from "firebase-admin/firestore";
+import { Timestamp, FieldValue } from "firebase-admin/firestore";
 import { logger } from "firebase-functions";
 import { ProcessedTranscriptDocument } from "../models/processedTranscript";
 import { ProposalDocument } from "../models/proposal";
@@ -69,7 +69,7 @@ export const processTranscript = onDocumentCreated(
     const claimed = await db().runTransaction(async (txn) => {
       const current = await txn.get(docRef);
       if (current.data()?.status !== "pending") return false;
-      txn.update(docRef, { status: "processing" });
+      txn.update(docRef, { status: "processing", processingStartedAt: FieldValue.serverTimestamp() });
       return true;
     });
 

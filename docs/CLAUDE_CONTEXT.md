@@ -564,3 +564,4 @@ All other credentials are managed through the Admin Panel.
 - `asanaOAuthStates` collection (separate from `oauthStates`) doesn't have explicit cleanup.
 - Gemini Notes format detection (`gemini_notes`) relies on file naming conventions.
 - Per-user AI keys (`users/{uid}/apiKeys`) are stored plaintext — only rules-protected. Consider KMS encryption.
+- Token encryption (`users/{uid}/tokens/google` and `users/{uid}/tokens/asana`) was added in the code review fix pass. Existing plaintext tokens are lazily migrated to KMS-encrypted format on next read.

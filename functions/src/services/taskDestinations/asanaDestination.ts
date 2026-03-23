@@ -26,7 +26,8 @@ function asanaHttpStatus(err: unknown): number | null {
  *   - Refresh Asana tokens if needed (via getValidAsanaAccessToken)
  */
 export class AsanaDestination implements TaskDestination {
-  private async getProjectId(uid: string): Promise<string> {
+  private async getProjectId(uid: string, override?: string): Promise<string> {
+    if (override) return override;
     const snap = await admin.firestore().collection("users").doc(uid).get();
     const projectId = snap.data()?.preferences?.asanaProjectId as string | undefined;
     if (!projectId) {
@@ -51,7 +52,7 @@ export class AsanaDestination implements TaskDestination {
     // Always get a fresh token — Asana tokens may have different expiry than Google
     const accessToken = await getValidAsanaAccessToken(uid);
 
-    const projectId = await this.getProjectId(uid);
+    const projectId = await this.getProjectId(uid, taskData.asanaProjectId);
     const workspaceId = await this.getWorkspaceId(uid);
 
     // Try to find the task assignee in the workspace by matching the user's own
