@@ -19,9 +19,23 @@ import { encrypt, decrypt } from "./kms";
 
 // ─── Module-level cache ───────────────────────────────────────────────────────
 // Persists across warm invocations (~5-15 min). Reset on cold start.
-// NEVER export this — it must not be readable from outside this module.
+// NEVER export these — they must not be readable from outside this module.
 const cache = new Map<string, string>();
 let cacheLoaded = false;
+let cacheLoadedAt = 0;
+
+/**
+ * How long a loaded cache is considered fresh.
+ *
+ * Secrets are written by the `api` Cloud Run instance and read by `processTranscript`
+ * (a separate instance). The write-side already calls cache.clear() via setSecrets(),
+ * but that only flushes the local instance. The TTL ensures other instances reload
+ * from Firestore within this window after an admin updates credentials.
+ *
+ * 5 minutes is short enough to feel immediate in practice and avoids stale-key
+ * errors after a provider switch (Anthropic → OpenAI or vice versa).
+ */
+const CACHE_TTL_MS = 5 * 60 * 1000;
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -152,19 +166,21 @@ function getFromEnvVar(key: string): string | undefined {
  * @throws Error if the secret is not found anywhere in the resolution chain
  */
 export async function getSecret(key: string): Promise<string> {
-  // 1. Memory cache (warm instance path)
-  if (cache.has(key)) return cache.get(key)!;
-
-  // 2. Load all secrets from Firestore once per instance
-  if (!cacheLoaded) {
+  // Reload from Firestore if this is the first call or the TTL has expired.
+  // The TTL is the mechanism that propagates credential changes to instances
+  // other than the one that handled the PUT /admin/secrets request.
+  const cacheStale = !cacheLoaded || (Date.now() - cacheLoadedAt) > CACHE_TTL_MS;
+  if (cacheStale) {
+    cache.clear();
     await loadSecretsFromFirestore();
     cacheLoaded = true;
+    cacheLoadedAt = Date.now();
   }
 
-  // 3. Check cache again after Firestore load
+  // 1. Memory cache (populated by loadSecretsFromFirestore above)
   if (cache.has(key)) return cache.get(key)!;
 
-  // 4. Env var fallback
+  // 2. Env var fallback
   const envValue = getFromEnvVar(key);
   if (envValue) {
     cache.set(key, envValue);
@@ -214,9 +230,11 @@ export async function setSecrets(
     { merge: true }
   );
 
-  // Invalidate cache so the next getSecret() re-reads from Firestore
+  // Invalidate cache on the local instance. Other instances will reload
+  // automatically once their CACHE_TTL_MS window expires.
   cache.clear();
   cacheLoaded = false;
+  cacheLoadedAt = 0;
 }
 
 /**
