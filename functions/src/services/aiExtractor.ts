@@ -188,6 +188,7 @@ export async function extractTasksFromTranscript(
   });
 
   const provider = uid ? await getAIProviderForUser(uid) : await getAIProvider();
+  logger.info("aiExtractor: using provider", { type: provider.constructor.name });
   const chunks = chunkTranscript(transcript);
 
   // ── Single chunk: original behavior, no delay or dedup overhead ───────────

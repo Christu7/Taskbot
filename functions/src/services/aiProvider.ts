@@ -258,39 +258,46 @@ export async function getAIProvider(): Promise<AIProvider> {
 }
 
 /**
- * Returns the AI provider configured for a specific user.
+ * Returns the AI provider for a specific user.
  *
  * Resolution order:
- *   1. users/{uid}.aiProvider → provider name
- *      (fallback: AI_PROVIDER env var → "anthropic")
- *   2. users/{uid}/apiKeys/{providerName}.key → API key
- *      (fallback: provider's own env var)
+ *   1. users/{uid}/apiKeys/{providerName}.key — per-user API key
+ *      If present, also reads users/{uid}.aiProvider for the provider name.
+ *   2. Org-level getAIProvider() — reads config/secrets via Admin > Settings.
+ *      Never falls back to a hardcoded default; getAIProvider() throws if
+ *      neither Firestore nor AI_PROVIDER env var are set.
  *
  * @param uid - Firebase Auth UID of the user triggering the extraction
  */
 export async function getAIProviderForUser(uid: string): Promise<AIProvider> {
   const db = admin.firestore();
   const userSnap = await db.collection("users").doc(uid).get();
-  const providerName: string =
-    (userSnap.data()?.aiProvider as string | undefined) ??
-    process.env.AI_PROVIDER ??
-    "anthropic";
+  const userProviderName = userSnap.data()?.aiProvider as string | undefined;
 
-  const keySnap = await db
-    .collection("users").doc(uid)
-    .collection("apiKeys").doc(providerName)
-    .get();
-  // Per-user key takes priority; passing undefined falls back to org secret in extractTasks()
-  const apiKey: string | undefined = keySnap.data()?.key as string | undefined;
+  // Only use the per-user path when the user has explicitly configured a
+  // personal API key. Without a key, fall through to the org-level provider
+  // so the Admin > Settings selection is always respected.
+  if (userProviderName) {
+    const keySnap = await db
+      .collection("users").doc(uid)
+      .collection("apiKeys").doc(userProviderName)
+      .get();
+    const apiKey = keySnap.data()?.key as string | undefined;
 
-  switch (providerName) {
-    case "anthropic":
-      return new AnthropicProvider(apiKey);
-    case "openai":
-      return new OpenAIProvider(apiKey);
-    default:
-      throw new Error(
-        `Unknown AI provider "${providerName}" for user ${uid}. Supported values: "anthropic", "openai"`
-      );
+    if (apiKey) {
+      switch (userProviderName) {
+        case "anthropic":
+          return new AnthropicProvider(apiKey);
+        case "openai":
+          return new OpenAIProvider(apiKey);
+        default:
+          throw new Error(
+            `Unknown AI provider "${userProviderName}" for user ${uid}. Supported values: "anthropic", "openai"`
+          );
+      }
+    }
   }
+
+  // No per-user key — delegate entirely to the org-level provider
+  return getAIProvider();
 }

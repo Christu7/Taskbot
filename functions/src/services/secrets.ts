@@ -138,7 +138,7 @@ async function loadSecretsFromFirestore(): Promise<void> {
 function getFromEnvVar(key: string): string | undefined {
   const envMap: Record<string, string[]> = {
     "ai.provider":          ["AI_PROVIDER"],
-    "ai.apiKey":            ["AI_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"],
+    "ai.apiKey":            ["AI_API_KEY"],
     "slack.botToken":       ["SLACK_BOT_TOKEN"],
     "slack.signingSecret":  ["SLACK_SIGNING_SECRET"],
     "slack.clientId":       ["SLACK_CLIENT_ID"],
