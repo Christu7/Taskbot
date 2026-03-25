@@ -776,6 +776,14 @@ const STATUS_COLORS = {
   awaiting_configuration: "#f97316",
 };
 
+/** Map raw transcriptFormat + sourceType to a human-readable label. */
+function formatLabel(m) {
+  if (m.sourceType === "gmail_gemini_notes") return "Gemini Notes (Email)";
+  if (m.transcriptFormat === "gemini_notes")  return "Gemini Notes (Drive)";
+  if (m.transcriptFormat === "plain_transcript") return "Transcript";
+  return m.transcriptFormat || "—";
+}
+
 function meetingRow(m) {
   const color = STATUS_COLORS[m.status] || "#6b7280";
   const date = m.detectedAt
@@ -810,7 +818,7 @@ function meetingRow(m) {
     <td title="${escHtml((m.attendeeEmails || []).join(", "))}">${attendees}</td>
     <td>${m.taskCount}</td>
     <td><span class="badge" style="background:${color}20;color:${color};">${escHtml(m.status)}</span></td>
-    <td>${escHtml(m.transcriptFormat || "—")}</td>
+    <td>${escHtml(formatLabel(m))}</td>
     <td>${tokens}</td>
     <td style="white-space:nowrap;">
       <button class="btn btn-ghost expand-meeting-btn" data-meeting-id="${escHtml(m.id)}"

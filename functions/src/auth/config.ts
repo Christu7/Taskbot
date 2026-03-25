@@ -12,6 +12,9 @@ export const OAUTH_SCOPES: string[] = [
   "https://www.googleapis.com/auth/calendar.events.readonly",
   // Send notification emails on behalf of the user
   "https://www.googleapis.com/auth/gmail.send",
+  // Read Gmail messages to detect Gemini Notes emails (gmailWatcher)
+  // NOTE: adding this scope requires existing users to re-authorise via Settings → Reconnect
+  "https://www.googleapis.com/auth/gmail.readonly",
 ];
 
 // State tokens expire after 10 minutes.

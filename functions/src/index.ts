@@ -9,6 +9,7 @@ import { createUser, getUser, updateUser, isFirstUser } from "./services/firesto
 import { UserPreferences } from "./models/user";
 import { logActivity } from "./services/activityLogger";
 export { driveWatcher } from "./functions/driveWatcher";
+export { gmailWatcher } from "./functions/gmailWatcher";
 export { processTranscript } from "./functions/processTranscript";
 export { dedupTranscripts } from "./functions/dedupTranscripts";
 export { notifyUsers } from "./functions/notifyUsers";

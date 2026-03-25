@@ -81,29 +81,44 @@ export const processTranscript = onDocumentCreated(
     logger.info(`processTranscript: starting pipeline for meeting "${transcriptDoc.meetingTitle}" (${meetingId})`);
 
     try {
-      // ── Step 1: Fetch transcript text from Drive ───────────────────────
-      logger.info(`processTranscript: fetching transcript from Drive (file ${meetingId})`);
-
-      let accessToken: string;
-      try {
-        accessToken = await getValidAccessToken(transcriptDoc.detectedByUid);
-      } catch (err) {
-        throw new Error(
-          `Could not get access token for detecting user ${transcriptDoc.detectedByUid}: ` +
-          (err as Error).message
-        );
-      }
-
+      // ── Step 1: Fetch transcript text ──────────────────────────────────
+      // gmailWatcher pre-fetches and caches the transcript text to avoid a
+      // Drive API call for docs that were received via email rather than Drive.
+      // When the cache is populated, skip straight to extraction.
       let transcriptContent: TranscriptContent;
-      try {
-        transcriptContent = await getTranscriptContent(accessToken, transcriptDoc.driveFileId);
-      } catch (err) {
-        if (err instanceof TranscriptNotFoundError) {
+
+      if (transcriptDoc.cachedTranscriptText) {
+        logger.info(
+          `processTranscript: using cachedTranscriptText for ${meetingId} ` +
+          `(${transcriptDoc.cachedTranscriptText.length} chars) — skipping Drive fetch`
+        );
+        transcriptContent = {
+          transcript: transcriptDoc.cachedTranscriptText,
+          format: "gemini_notes",
+        };
+      } else {
+        logger.info(`processTranscript: fetching transcript from Drive (file ${meetingId})`);
+
+        let accessToken: string;
+        try {
+          accessToken = await getValidAccessToken(transcriptDoc.detectedByUid);
+        } catch (err) {
           throw new Error(
-            `Transcript file not found in Drive (may have been deleted): ${transcriptDoc.driveFileId}`
+            `Could not get access token for detecting user ${transcriptDoc.detectedByUid}: ` +
+            (err as Error).message
           );
         }
-        throw err;
+
+        try {
+          transcriptContent = await getTranscriptContent(accessToken, transcriptDoc.driveFileId);
+        } catch (err) {
+          if (err instanceof TranscriptNotFoundError) {
+            throw new Error(
+              `Transcript file not found in Drive (may have been deleted): ${transcriptDoc.driveFileId}`
+            );
+          }
+          throw err;
+        }
       }
 
       if (!transcriptContent.transcript.trim()) {

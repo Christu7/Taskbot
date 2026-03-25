@@ -76,6 +76,24 @@ export interface ProcessedTranscriptDocument {
    */
   transcriptFormat?: "plain_transcript" | "gemini_notes";
   /**
+   * How the transcript reached TaskBot.
+   *
+   * "drive"               — Detected in the user's Google Drive by driveWatcher.
+   * "gmail_gemini_notes"  — Detected in Gmail by gmailWatcher (Gemini Notes email).
+   */
+  sourceType?: "drive" | "gmail_gemini_notes";
+  /**
+   * Pre-fetched transcript text.  Set by gmailWatcher so processTranscript
+   * can skip the Drive API fetch entirely for Gmail-sourced documents.
+   */
+  cachedTranscriptText?: string;
+  /**
+   * How the transcript text was extracted from the source document.
+   * "tab"      — Extracted from the "Transcript" tab via the Docs API.
+   * "full_doc" — Exported as plain text via the Drive API (fallback).
+   */
+  extractionMethod?: "tab" | "full_doc";
+  /**
    * True when a Gemini Notes "Notes" tab was found and passed to the AI.
    * Useful for debugging and analytics.
    */
