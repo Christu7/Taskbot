@@ -39,11 +39,41 @@ function buildGmailClient(accessToken: string) {
 // ─── Public functions ─────────────────────────────────────────────────────────
 
 /**
+ * Performs a minimal Gmail API call to verify the access token has the
+ * `gmail.readonly` scope.  Returns normally on success, throws a
+ * `GmailScopeError` if the token is valid but missing the required scope
+ * (HTTP 403 / "insufficient permission").
+ */
+export async function testGmailReadAccess(accessToken: string): Promise<void> {
+  const gmail = buildGmailClient(accessToken);
+  try {
+    await gmail.users.messages.list({ userId: "me", maxResults: 1 });
+  } catch (err) {
+    const status = (err as { code?: number; status?: number }).code ??
+                   (err as { code?: number; status?: number }).status;
+    const message = (err as Error).message ?? "";
+    if (status === 403 || /insufficient.permission/i.test(message)) {
+      throw new GmailScopeError("gmail.readonly scope missing — user must re-authorize");
+    }
+    throw err;
+  }
+}
+
+/** Thrown when a Gmail API call fails due to missing OAuth scope (not expired token). */
+export class GmailScopeError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "GmailScopeError";
+  }
+}
+
+/**
  * Search Gmail for Gemini Notes emails received after `sinceTimestamp`.
  *
- * Uses a broad subject query and then verifies each result against the
- * expected subject regex to avoid false positives.  Logs the raw From: header
- * of every matching message for diagnostics — the sender address is never stored.
+ * Uses a broad query ("from:gemini subject:Notes") and verifies each result
+ * against SUBJECT_RE to avoid false positives.  Intentionally permissive to
+ * maximise discoverability during initial rollout — tighten once the sender
+ * address is confirmed from the From: logs below.
  *
  * @param accessToken    - Valid OAuth access token with `gmail.readonly` scope
  * @param sinceTimestamp - Lower bound; only emails received after this date are returned
@@ -56,9 +86,11 @@ export async function findGeminiNotesEmails(
   const gmail = buildGmailClient(accessToken);
   const afterUnix = Math.floor(sinceTimestamp.getTime() / 1000);
 
-  // Gmail search operators: subject prefix + Unix after timestamp.
-  // Intentionally broad — SUBJECT_RE filtering happens below.
-  const query = `subject:"Notes: '" after:${afterUnix}`;
+  // FIX 2: Broader query — drops the apostrophe/quote pattern that may not
+  // match all Gmail subject encodings.  SUBJECT_RE does the strict filtering.
+  const query = `from:gemini subject:Notes after:${afterUnix}`;
+
+  logger.info(`findGeminiNotesEmails: query="${query}"`);
 
   const listRes = await gmail.users.messages.list({
     userId: "me",
@@ -67,6 +99,7 @@ export async function findGeminiNotesEmails(
   });
 
   const messages = listRes.data.messages ?? [];
+  logger.info(`findGeminiNotesEmails: raw API result — ${messages.length} message(s)`);
   if (messages.length === 0) return [];
 
   const results: GeminiNotesEmailRef[] = [];

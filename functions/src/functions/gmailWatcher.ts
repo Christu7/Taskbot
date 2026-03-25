@@ -3,7 +3,7 @@ import { onSchedule } from "firebase-functions/v2/scheduler";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { logger } from "firebase-functions";
 import { getActiveUsers, updateUser } from "../services/firestore";
-import { findGeminiNotesEmails, extractGeminiNotesDocId, parseGeminiNotesSubject } from "../services/gmail";
+import { findGeminiNotesEmails, extractGeminiNotesDocId, parseGeminiNotesSubject, testGmailReadAccess, GmailScopeError } from "../services/gmail";
 import { getTranscriptContent } from "../services/drive";
 import { findMeetingEvent } from "../services/calendar";
 import { getValidAccessToken } from "../auth";
@@ -130,28 +130,54 @@ async function processUserGmail(
 
   await updateUser(uid, { hasValidTokens: true });
 
+  // ── Fix 3: OAuth scope check ──────────────────────────────────────────────
+  // A valid token does not guarantee gmail.readonly was granted (users may have
+  // authorised before that scope was added, or revoked it selectively).
+  // Detect this early to give a clear log rather than a cryptic API error.
+  try {
+    await testGmailReadAccess(accessToken);
+  } catch (err) {
+    if (err instanceof GmailScopeError) {
+      logger.warn(
+        `gmailWatcher: user ${uid} (${detectorEmail}) is missing gmail.readonly scope — ` +
+        "needs re-authorization. Skipping without marking hasValidTokens=false.",
+        { error: (err as Error).message }
+      );
+      return 0;
+    }
+    throw err;
+  }
+
   // ── Step 2: Determine the look-back window ────────────────────────────────
-  // Track per-user lastGmailCheck so we use a precise window rather than a
-  // fixed LOOKBACK_MINUTES. On the very first run, initialise to now and return
-  // without backfilling — we only want emails going forward.
   const userRef = db().collection("users").doc(uid);
   const userSnap = await userRef.get();
   const lastGmailCheck = userSnap.data()?.lastGmailCheck as Timestamp | undefined;
   const now = Timestamp.now();
 
-  if (!lastGmailCheck) {
-    logger.info(
-      `gmailWatcher: first run for user ${uid} — setting lastGmailCheck to now, no backfill`
-    );
-    await userRef.update({ lastGmailCheck: now });
-    return 0;
-  }
+  // Debug log (a)
+  logger.info(
+    `gmailWatcher: processing user ${uid} (${detectorEmail}), ` +
+    `lastGmailCheck: ${lastGmailCheck ? lastGmailCheck.toDate().toISOString() : "not set"}`
+  );
 
-  const sinceTimestamp = lastGmailCheck.toDate();
+  // Fix 1: On the very first run, look back 24 hours rather than returning
+  // early with now. Emails that arrived before the first deploy were missed
+  // permanently under the old "set to now and return" approach.
+  let sinceTimestamp: Date;
+  if (!lastGmailCheck) {
+    sinceTimestamp = new Date(Date.now() - 86_400_000);
+    logger.info(
+      `gmailWatcher: first run for user ${uid} — using 24-hour lookback ` +
+      `(since ${sinceTimestamp.toISOString()})`
+    );
+  } else {
+    sinceTimestamp = lastGmailCheck.toDate();
+  }
 
   // ── Step 3: Search Gmail for Gemini Notes emails ──────────────────────────
   let emailRefs;
   try {
+    // Debug log (b) is emitted inside findGeminiNotesEmails (query string + raw count)
     emailRefs = await findGeminiNotesEmails(accessToken, sinceTimestamp);
   } catch (err) {
     logger.error(
@@ -165,14 +191,22 @@ async function processUserGmail(
   // Advance the checkpoint regardless of how many emails matched
   await userRef.update({ lastGmailCheck: now });
 
+  // Debug logs (c) and (d)
+  logger.info(`gmailWatcher: Gmail search returned ${emailRefs.length} message(s) for user ${uid}`);
   if (emailRefs.length === 0) {
-    logger.debug(`gmailWatcher: no Gemini Notes emails found for user ${uid}`);
+    logger.info(
+      `gmailWatcher: no messages found for user ${uid} — ` +
+      "check query and sinceTimestamp above; confirm email arrived in this window"
+    );
     return 0;
   }
 
-  logger.info(
-    `gmailWatcher: found ${emailRefs.length} candidate email(s) for user ${uid}`
-  );
+  // Debug log (e) — log each matched message
+  emailRefs.forEach((ref) => {
+    logger.info(
+      `gmailWatcher: candidate message — id=${ref.messageId} subject="${ref.subject}"`
+    );
+  });
 
   // ── Step 4: Enrich and record each transcript ─────────────────────────────
   let newCount = 0;
@@ -202,6 +236,12 @@ async function processUserGmail(
         return;
       }
 
+      // Debug log (f)
+      logger.info(
+        `gmailWatcher: extractGeminiNotesDocId for message ${emailRef.messageId} — ` +
+        (docInfo ? `found docId=${docInfo.docId}` : "null — no Google Docs URL in body")
+      );
+
       if (!docInfo) {
         logger.warn(
           `gmailWatcher: no Google Docs URL found in email for "${meetingTitle}" — skipping`
@@ -214,10 +254,14 @@ async function processUserGmail(
       // ── Step 4c: Deduplicate ────────────────────────────────────────────
       // driveFileId is the Firestore document ID, so a single .get() is enough.
       const existing = await db().collection("processedTranscripts").doc(docId).get();
+
+      // Debug log (g)
+      logger.info(
+        `gmailWatcher: dedup check for docId=${docId} — ` +
+        (existing.exists ? "already exists in processedTranscripts, skipping" : "new, will create")
+      );
+
       if (existing.exists) {
-        logger.debug(
-          `gmailWatcher: doc ${docId} already in processedTranscripts — skipping`
-        );
         return;
       }
 
