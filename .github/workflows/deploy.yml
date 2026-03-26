@@ -11,6 +11,9 @@ jobs:
     name: Deploy production clients (main)
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write   # Required for Workload Identity Federation
 
     steps:
       - name: Checkout
@@ -40,27 +43,35 @@ jobs:
       - name: Install functions dependencies
         run: npm install --prefix functions
 
-      - name: Enable legacy functions:config commands
-        run: firebase experiments:enable legacyRuntimeConfigCommands
-
       # ── Deploy: sponcon ────────────────────────────────────────────────────
 
+      - name: Authenticate to Google Cloud (sponcon)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER_SPONCON }}
+          service_account: ${{ secrets.SA_EMAIL_SPONCON }}
+
       - name: Deploy — sponcon
-        env:
-          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN_SPONCON }}
         run: bash deploy/deploy.sh sponcon
 
       # ── Deploy: elysianfields (prod) ───────────────────────────────────────
 
+      - name: Authenticate to Google Cloud (elysianfields prod)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER_ELYSIANFIELDS_PROD }}
+          service_account: ${{ secrets.SA_EMAIL_ELYSIANFIELDS_PROD }}
+
       - name: Deploy — elysianfields prod
-        env:
-          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN_ELYSIANFIELDS_PROD }}
         run: bash deploy/deploy.sh elysianfields-prod
 
   deploy-development:
     name: Deploy development clients (develop)
     if: github.ref == 'refs/heads/develop'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write   # Required for Workload Identity Federation
 
     steps:
       - name: Checkout
@@ -85,12 +96,13 @@ jobs:
       - name: Install functions dependencies
         run: npm install --prefix functions
 
-      - name: Enable legacy functions:config commands
-        run: firebase experiments:enable legacyRuntimeConfigCommands
-
       # ── Deploy: elysianfields (dev) ────────────────────────────────────────
 
+      - name: Authenticate to Google Cloud (elysianfields dev)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER_ELYSIANFIELDS_DEV }}
+          service_account: ${{ secrets.SA_EMAIL_ELYSIANFIELDS_DEV }}
+
       - name: Deploy — elysianfields dev
-        env:
-          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN_ELYSIANFIELDS_DEV }}
         run: bash deploy/deploy.sh elysianfields-dev
