@@ -64,7 +64,7 @@ export class AsanaDestination implements TaskDestination {
     const sourceLines: string[] = [];
     if (taskData.sourceLink) sourceLines.push(`Source: ${taskData.sourceLink}`);
     sourceLines.push(
-      `Extracted by TaskBot from: ${taskData.meetingTitle}` +
+      `Extracted by MeetBot from: ${taskData.meetingTitle}` +
       (taskData.meetingDate ? ` (${taskData.meetingDate})` : "")
     );
     const notes = [taskData.description, "", "---", ...sourceLines].join("\n");

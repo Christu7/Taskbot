@@ -5,7 +5,7 @@ import { getUser, updateUser } from "../firestore";
 import { TaskDestination, TaskData, ExternalTaskRef, ExternalTaskStatus, GoogleTokens } from "./taskDestination";
 import { TokenExpiredError } from "../../utils/errors";
 
-const TASK_LIST_NAME = "TaskBot";
+const TASK_LIST_NAME = "MeetBot";
 
 function buildTasksClient(accessToken: string) {
   const authClient = createOAuthClient();
@@ -60,7 +60,7 @@ export class GoogleTasksDestination implements TaskDestination {
     const sourceLines: string[] = [];
     if (taskData.sourceLink) sourceLines.push(`Source: ${taskData.sourceLink}`);
     sourceLines.push(
-      `Extracted by TaskBot from: ${taskData.meetingTitle}` +
+      `Extracted by MeetBot from: ${taskData.meetingTitle}` +
       (taskData.meetingDate ? ` (${taskData.meetingDate})` : "")
     );
 

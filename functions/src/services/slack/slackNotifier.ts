@@ -107,7 +107,7 @@ function buildMessage(
     type: "header",
     text: {
       type: "plain_text",
-      text: `TaskBot: ${count} proposed task${count !== 1 ? "s" : ""} from ${meetingTitle}`,
+      text: `MeetBot: ${count} proposed task${count !== 1 ? "s" : ""} from ${meetingTitle}`,
       emoji: false,
     },
   };
@@ -157,7 +157,7 @@ function buildMessage(
     ...footerParts,
   ];
 
-  const text = `TaskBot: ${count} proposed task${count !== 1 ? "s" : ""} from "${meetingTitle}"`;
+  const text = `MeetBot: ${count} proposed task${count !== 1 ? "s" : ""} from "${meetingTitle}"`;
 
   return { text, blocks };
 }

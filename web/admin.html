@@ -3,14 +3,14 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>TaskBot — Admin</title>
+  <title>MeetBot — Admin</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
 
   <header class="site-header">
     <div class="container">
-      <a href="/dashboard" class="brand">TaskBot</a>
+      <a href="/dashboard" class="brand">MeetBot</a>
       <nav class="site-nav">
         <a href="/dashboard">Dashboard</a>
         <a href="/tasks">Tasks</a>
@@ -48,8 +48,8 @@
 
           <!-- Step 1: AI Provider -->
           <div class="wizard-pane" id="wizard-step-1">
-            <h2 class="wizard-title">Welcome to TaskBot</h2>
-            <p class="wizard-desc">Let's configure your AI provider so TaskBot can extract tasks from meeting transcripts.</p>
+            <h2 class="wizard-title">Welcome to MeetBot</h2>
+            <p class="wizard-desc">Let's configure your AI provider so MeetBot can extract tasks from meeting transcripts.</p>
             <div class="setting-row" style="border:none;padding:0;">
               <div style="width:100%;">
                 <div class="setting-label">AI Provider</div>
@@ -74,7 +74,7 @@
           <!-- Step 2: Notifications -->
           <div class="wizard-pane" id="wizard-step-2" hidden>
             <h2 class="wizard-title">Connect Notification Channels</h2>
-            <p class="wizard-desc">Configure how TaskBot notifies your team about new proposals. Both are optional — email always works as fallback.</p>
+            <p class="wizard-desc">Configure how MeetBot notifies your team about new proposals. Both are optional — email always works as fallback.</p>
             <div class="setting-label" style="margin-bottom:8px;">Slack Bot Token (optional)</div>
             <div class="input-reveal" style="margin-bottom:4px;">
               <input type="password" id="wiz-slack-token" class="form-input" placeholder="xoxb-...">
@@ -417,7 +417,7 @@
         <div id="invite-modal" class="modal-backdrop" hidden>
           <div class="modal-box">
             <h3>Invite User</h3>
-            <p>Enter the email address of the person you'd like to invite. They'll receive a link to sign in to TaskBot using Google SSO.</p>
+            <p>Enter the email address of the person you'd like to invite. They'll receive a link to sign in to MeetBot using Google SSO.</p>
             <input type="email" id="invite-email" placeholder="user@example.com"
               style="width:100%;padding:8px 12px;font-size:14px;border:1px solid #d1d5db;border-radius:6px;box-sizing:border-box;" />
             <div class="modal-actions">

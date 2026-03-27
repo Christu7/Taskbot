@@ -3,7 +3,7 @@ import { logger } from "firebase-functions";
 import { createOAuthClient } from "../auth";
 import { getUser, updateUser } from "./firestore";
 
-const TASK_LIST_NAME = "TaskBot";
+const TASK_LIST_NAME = "MeetBot";
 
 function buildTasksClient(accessToken: string) {
   const authClient = createOAuthClient();

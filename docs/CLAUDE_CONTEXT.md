@@ -1,11 +1,11 @@
-# TaskBot — Claude Context Handout
+# MeetBot — Claude Context Handout
 
 > Drop this file into a new Claude conversation to provide full project context.
-> Last updated: Phase 3 complete (Prompts 1–7).
+> Last updated: Phase 3 complete (Prompts 1–7). Product renamed from TaskBot to MeetBot.
 
 ---
 
-## 1. What TaskBot Is
+## 1. What MeetBot Is
 
 A Firebase-based SaaS application that:
 1. Monitors users' Google Drive for meeting transcript files
@@ -565,3 +565,12 @@ All other credentials are managed through the Admin Panel.
 - Gemini Notes format detection (`gemini_notes`) relies on file naming conventions.
 - Per-user AI keys (`users/{uid}/apiKeys`) are stored plaintext — only rules-protected. Consider KMS encryption.
 - Token encryption (`users/{uid}/tokens/google` and `users/{uid}/tokens/asana`) was added in the code review fix pass. Existing plaintext tokens are lazily migrated to KMS-encrypted format on next read.
+
+---
+
+## 14. Manual Steps Required
+
+These changes cannot be made in code and must be done through external consoles:
+
+- **Slack app display name** must be changed manually at api.slack.com → Your Apps → [app name] → Basic Information → Display Name (change from "TaskBot" to "MeetBot")
+- **Google Tasks list name**: existing users will have a legacy "TaskBot" list in their Google Tasks. The code now creates/looks for a "MeetBot" list. The old list can be deleted manually by each user if desired — it will not be used.

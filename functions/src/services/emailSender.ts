@@ -32,7 +32,7 @@ function encodeRawMessage(
   html: string
 ): string {
   const headers = [
-    `From: TaskBot <${fromEmail}>`,
+    `From: MeetBot <${fromEmail}>`,
     `To: ${toEmail}`,
     `Subject: ${subject}`,
     "MIME-Version: 1.0",
@@ -106,7 +106,7 @@ function buildEmailHtml(
 
         <!-- Header -->
         <tr><td style="background:#1a73e8;padding:20px 28px;">
-          <h1 style="margin:0;color:#ffffff;font-size:20px;font-weight:bold;letter-spacing:-0.5px;">TaskBot</h1>
+          <h1 style="margin:0;color:#ffffff;font-size:20px;font-weight:bold;letter-spacing:-0.5px;">MeetBot</h1>
           <p style="margin:4px 0 0;color:#c5d8f8;font-size:13px;">Meeting action items for your review</p>
         </td></tr>
 
@@ -187,7 +187,7 @@ export async function sendProposalNotification(
   expiryHours = 48
 ): Promise<void> {
   const count = proposals.length;
-  const subject = `TaskBot: ${count} proposed task${count !== 1 ? "s" : ""} from "${meetingTitle}"`;
+  const subject = `MeetBot: ${count} proposed task${count !== 1 ? "s" : ""} from "${meetingTitle}"`;
 
   const html = buildEmailHtml(
     recipientName,
@@ -223,7 +223,7 @@ export async function sendAsanaWarningEmail(
   recipientEmail: string,
   recipientName: string
 ): Promise<void> {
-  const subject = "TaskBot: Asana not connected — task sent to Google Tasks";
+  const subject = "MeetBot: Asana not connected — task sent to Google Tasks";
 
   const html = `<!DOCTYPE html>
 <html lang="en">
@@ -237,7 +237,7 @@ export async function sendAsanaWarningEmail(
   </p>
   <p style="margin:0 0 24px;line-height:1.5;">
     To reconnect Asana, visit your
-    <a href="${SETTINGS_URL}" style="color:#1a73e8;">TaskBot settings</a>.
+    <a href="${SETTINGS_URL}" style="color:#1a73e8;">MeetBot settings</a>.
   </p>
   <hr style="border:none;border-top:1px solid #e8e8e8;margin:0 0 16px;">
   <p style="font-size:12px;color:#888888;margin:0;">
@@ -270,7 +270,7 @@ export async function sendInviteEmail(
   recipientEmail: string,
   appUrl: string
 ): Promise<void> {
-  const subject = "You've been invited to TaskBot";
+  const subject = "You've been invited to MeetBot";
 
   const html = `<!DOCTYPE html>
 <html lang="en">
@@ -282,14 +282,14 @@ export async function sendInviteEmail(
 
         <!-- Header -->
         <tr><td style="background:#1a73e8;padding:20px 28px;">
-          <h1 style="margin:0;color:#ffffff;font-size:20px;font-weight:bold;letter-spacing:-0.5px;">TaskBot</h1>
+          <h1 style="margin:0;color:#ffffff;font-size:20px;font-weight:bold;letter-spacing:-0.5px;">MeetBot</h1>
           <p style="margin:4px 0 0;color:#c5d8f8;font-size:13px;">Automatic action items from your meetings</p>
         </td></tr>
 
         <!-- Body -->
         <tr><td style="padding:28px;">
           <p style="margin:0 0 16px;font-size:15px;color:#333333;line-height:1.5;">
-            You've been invited to <strong>TaskBot</strong> — a tool that automatically extracts
+            You've been invited to <strong>MeetBot</strong> — a tool that automatically extracts
             action items from your meeting transcripts and creates tasks in Google Tasks or Asana.
           </p>
           <p style="margin:0 0 24px;font-size:15px;color:#333333;line-height:1.5;">
@@ -302,7 +302,7 @@ export async function sendInviteEmail(
               <a href="${appUrl}"
                  style="background:#1a73e8;color:#ffffff;padding:13px 32px;text-decoration:none;
                         border-radius:5px;font-weight:bold;font-size:15px;display:inline-block;">
-                Sign in to TaskBot
+                Sign in to MeetBot
               </a>
             </td></tr>
           </table>
@@ -310,7 +310,7 @@ export async function sendInviteEmail(
           <!-- Footer -->
           <hr style="border:none;border-top:1px solid #e8e8e8;margin:0 0 16px;">
           <p style="font-size:12px;color:#888888;margin:0;line-height:1.6;">
-            You received this invite because someone on your team added you to TaskBot.
+            You received this invite because someone on your team added you to MeetBot.
             If you were not expecting this, you can safely ignore this email.
           </p>
         </td></tr>
