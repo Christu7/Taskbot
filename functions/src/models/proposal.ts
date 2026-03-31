@@ -88,6 +88,8 @@ export interface ProposalDocument {
   reassignedFrom?: string;
   /** Display name of the original assignee, stored at reassignment time for display. */
   reassignedFromName?: string;
+  /** UID of the admin or project manager who performed the reassignment. */
+  reassignedBy?: string;
   /** When the proposal was reassigned to the current assignee. */
   reassignedAt?: Timestamp;
 

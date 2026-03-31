@@ -1117,11 +1117,11 @@ app.get("/users/active", authenticate, async (_req: Request, res: Response) => {
   res.json({ users });
 });
 
-// ─── POST /proposals/:meetingId/:taskId/reassign ──────────────────────────────
-// Reassigns a pending proposal to another active TaskBot user.
-// Only the current assignee may reassign. Sends a notification to the new assignee.
+// ─── PATCH /proposals/:meetingId/:taskId/reassign ─────────────────────────────
+// Reassigns a pending proposal to another active user.
+// Admin or project manager only. Sends a notification to the new assignee.
 
-app.post(
+app.patch(
   "/proposals/:meetingId/:taskId/reassign",
   authenticate,
   async (req: Request, res: Response) => {
@@ -1134,8 +1134,9 @@ app.post(
       return;
     }
 
-    if (newAssigneeUid === uid) {
-      res.status(400).json({ error: "New assignee must be different from the current assignee" });
+    const callerDoc = await getUser(uid);
+    if (!callerDoc || (callerDoc.role !== "admin" && callerDoc.role !== "project_manager")) {
+      res.status(403).json({ error: "Admin or project manager access required" });
       return;
     }
 
@@ -1145,16 +1146,18 @@ app.post(
     if (!snap.exists) { res.status(404).json({ error: "Proposal not found" }); return; }
 
     const proposal = snap.data() as ProposalDocument;
-    const callerDoc = await getUser(uid);
-    const isPrivileged = callerDoc?.role === "admin" || callerDoc?.role === "project_manager";
-    if (!isPrivileged && proposal.assigneeUid !== uid) { res.status(403).json({ error: "Forbidden" }); return; }
+
+    if (newAssigneeUid === proposal.assigneeUid) {
+      res.status(400).json({ error: "New assignee is the same as the current assignee" });
+      return;
+    }
     if (proposal.status !== "pending") {
       res.status(409).json({ error: "Only pending proposals can be reassigned" });
       return;
     }
 
     // Look up the new assignee
-    const [newUserSnap, currentUserSnap, transcriptSnap] = await Promise.all([
+    const [newUserSnap, callerSnap, transcriptSnap] = await Promise.all([
       db().collection("users").doc(newAssigneeUid).get(),
       db().collection("users").doc(uid).get(),
       db().collection("processedTranscripts").doc(meetingId).get(),
@@ -1166,21 +1169,22 @@ app.post(
     }
 
     const newUser = newUserSnap.data() as UserDocument;
-    const currentUser = currentUserSnap.data() as UserDocument;
+    const caller = callerSnap.data() as UserDocument;
     const meetingTitle = transcriptSnap.data()?.meetingTitle ?? meetingId;
 
     await docRef.update({
       assigneeUid: newAssigneeUid,
       assigneeEmail: newUser.email,
       assigneeName: newUser.displayName || newUser.email,
-      reassignedFrom: uid,
-      reassignedFromName: currentUser.displayName || currentUser.email,
+      reassignedFrom: proposal.assigneeUid,
+      reassignedFromName: proposal.assigneeName || proposal.assigneeEmail,
+      reassignedBy: uid,
       reassignedAt: FieldValue.serverTimestamp(),
     });
 
     logger.info(
       `reassign: proposal ${taskId} in meeting ${meetingId} ` +
-      `reassigned from ${uid} to ${newAssigneeUid}`
+      `reassigned from ${proposal.assigneeUid} to ${newAssigneeUid} by admin ${uid}`
     );
 
     // Notify new assignee — non-fatal if it fails
@@ -1190,15 +1194,15 @@ app.post(
       const token = await generateApprovalToken(newAssigneeUid, meetingId, expiryHours);
       const reviewLink = `${APP_URL()}/review?token=${token}`;
 
-      // Use updated proposal data for the notification
       const updatedProposal = {
         id: taskId,
         ...proposal,
         assigneeUid: newAssigneeUid,
         assigneeEmail: newUser.email,
         assigneeName: newUser.displayName || newUser.email,
-        reassignedFrom: uid,
-        reassignedFromName: currentUser.displayName || currentUser.email,
+        reassignedFrom: proposal.assigneeUid,
+        reassignedFromName: proposal.assigneeName || proposal.assigneeEmail,
+        reassignedBy: uid,
       };
 
       await routeNotification({
@@ -1211,13 +1215,13 @@ app.post(
         approveAllLink: reviewLink,
         expiryHours,
         senderAccessToken,
-        senderEmail: currentUser.email,
+        senderEmail: caller.email,
       });
     } catch (err) {
       logger.warn(`reassign: notification failed for ${taskId}`, { error: (err as Error).message });
     }
 
-    res.json({ success: true });
+    res.json({ success: true, newAssigneeUid, newAssigneeEmail: newUser.email });
   }
 );
 

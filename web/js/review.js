@@ -48,6 +48,17 @@ async function loadAsanaProjects() {
   }
 }
 
+// ─── Active users loader (for admin assignee dropdown) ────────────────────────
+
+async function loadActiveUsers() {
+  try {
+    const result = await api.getActiveUsers();
+    activeUsers = result.users || [];
+  } catch {
+    // Non-fatal — assignee dropdown will not render, but review page still works
+  }
+}
+
 // ─── Boot ─────────────────────────────────────────────────────────────────────
 
 async function boot() {
@@ -109,8 +120,11 @@ async function bootFromAuth(meetingId) {
   const role = await getUserRole();
   isPrivilegedUser = role === "admin" || role === "project_manager";
 
-  // Load Asana projects in parallel — non-blocking, best-effort
-  await loadAsanaProjects();
+  // Load Asana projects and (if privileged) active users — non-blocking, best-effort
+  await Promise.all([
+    loadAsanaProjects(),
+    isPrivilegedUser ? loadActiveUsers() : Promise.resolve(),
+  ]);
 
   try {
     const result = await api.getMeetingProposals(meetingId);
@@ -349,7 +363,6 @@ function buildCard(proposal) {
       <button class="btn btn-approve" data-action="approve">Approve</button>
       <button class="btn btn-edit"    data-action="edit">Edit</button>
       <button class="btn btn-reject"  data-action="reject">Reject</button>
-      <button class="btn btn-ghost"   data-action="reassign">Reassign</button>
     `;
   } else if (proposal.status === "approved") {
     footerContent = `<span class="status-label approved">✓ Approved</span>`;
@@ -374,6 +387,22 @@ function buildCard(proposal) {
     ? `<div class="reassigned-note">Reassigned from ${esc(proposal.reassignedFromName)}</div>`
     : "";
 
+  // Assignee section — dropdown for admins on pending proposals, text otherwise
+  const currentAssigneeName = proposal.assigneeName || proposal.assigneeEmail || "Unknown";
+  let assigneeHtml = "";
+  if (proposal.status === "pending" && isPrivilegedUser && activeUsers.length > 0) {
+    const opts = activeUsers.map((u) =>
+      `<option value="${esc(u.uid)}"${u.uid === proposal.assigneeUid ? " selected" : ""}>${esc(u.displayName || u.email)}</option>`
+    ).join("");
+    assigneeHtml = `
+      <div class="due-date-row">
+        <label class="due-label" for="assignee-${proposal.id}">Assigned to:</label>
+        <select id="assignee-${proposal.id}" class="due-input">${opts}</select>
+      </div>`;
+  } else {
+    assigneeHtml = `<div class="due-date">Assigned to: ${esc(currentAssigneeName)}</div>`;
+  }
+
   div.innerHTML = `
     <div class="card-body">
       <div class="card-top">
@@ -383,6 +412,7 @@ function buildCard(proposal) {
       ${sharedNote}
       ${reassignedNote}
       <div class="task-description" id="desc-${proposal.id}">${esc(displayDesc)}</div>
+      ${assigneeHtml}
       ${proposal.status === "pending"
         ? `<div class="due-date-row">
              <label class="due-label" for="due-${proposal.id}">Deadline:</label>
@@ -416,6 +446,12 @@ function buildCard(proposal) {
   if (proposal.status === "approved" || proposal.status === "created") div.classList.add("approved");
   if (proposal.status === "rejected") div.classList.add("rejected");
 
+  // Attach assignee dropdown change handler for admins
+  const assigneeSelect = div.querySelector(`#assignee-${proposal.id}`);
+  if (assigneeSelect) {
+    assigneeSelect.addEventListener("change", (e) => handleAssigneeChange(e, proposal));
+  }
+
   div.addEventListener("click", handleCardClick);
   return div;
 }
@@ -447,6 +483,8 @@ function buildReadOnlyCard(proposal) {
     ? `<div class="shared-with-note">Shared with: ${esc(proposal.sharedWith.join(", "))}</div>`
     : "";
 
+  const assigneeName = proposal.assigneeName || proposal.assigneeEmail || "Unknown";
+
   div.innerHTML = `
     <div class="card-body">
       <div class="card-top">
@@ -455,6 +493,7 @@ function buildReadOnlyCard(proposal) {
       <div class="task-title">${esc(displayTitle)}</div>
       ${sharedNote}
       <div class="task-description">${esc(displayDesc)}</div>
+      <div class="due-date">Assigned to: ${esc(assigneeName)}</div>
       ${(proposal.editedDueDate || proposal.suggestedDueDate)
         ? `<div class="due-date">Due: ${esc(proposal.editedDueDate || proposal.suggestedDueDate)}</div>`
         : ""}
@@ -484,11 +523,6 @@ async function handleCardClick(e) {
 
   if (action === "retry") {
     await retryTaskCreation(card, proposalId);
-    return;
-  }
-
-  if (action === "reassign") {
-    await enterReassignMode(card, proposalId);
     return;
   }
 
@@ -531,72 +565,31 @@ function restoreFooter(card, proposal) {
     <button class="btn btn-approve" data-action="approve">Approve</button>
     <button class="btn btn-edit"    data-action="edit">Edit</button>
     <button class="btn btn-reject"  data-action="reject">Reject</button>
-    <button class="btn btn-ghost"   data-action="reassign">Reassign</button>
   `;
 }
 
-async function enterReassignMode(card, proposalId) {
-  const footer = document.getElementById(`footer-${proposalId}`);
+async function handleAssigneeChange(e, proposal) {
+  const select = e.target;
+  const newUid = select.value;
+  const prevUid = proposal.assigneeUid;
+  if (newUid === prevUid) return;
 
-  // Load active users if not yet fetched
-  if (activeUsers.length === 0) {
-    try {
-      const result = await api.getActiveUsers();
-      activeUsers = result.users || [];
-    } catch {
-      showToast("Could not load users for reassignment.", "error");
-      return;
-    }
+  select.disabled = true;
+  try {
+    const result = await api.reassignProposal(currentMeetingId, proposal.id, newUid);
+    // Update the in-memory proposal so subsequent renders are correct
+    const newUser = activeUsers.find((u) => u.uid === newUid);
+    proposal.assigneeUid = result.newAssigneeUid ?? newUid;
+    proposal.assigneeName = newUser?.displayName || newUser?.email || "";
+    proposal.assigneeEmail = newUser?.email || "";
+    showToast("Task reassigned.", "success");
+  } catch (err) {
+    // Revert dropdown to previous selection
+    select.value = prevUid;
+    showToast("Reassignment failed — try again", "error");
+  } finally {
+    select.disabled = false;
   }
-
-  const proposal = ownProposals.find((x) => x.id === proposalId);
-  const currentUid = proposal?.assigneeUid;
-
-  const options = activeUsers
-    .filter((u) => u.uid !== currentUid)
-    .map((u) => `<option value="${esc(u.uid)}">${esc(u.displayName || u.email)}</option>`)
-    .join("");
-
-  if (!options) {
-    showToast("No other users available to reassign to.", "info");
-    return;
-  }
-
-  footer.innerHTML = `
-    <select id="reassign-select-${proposalId}" class="reassign-select">
-      <option value="">Select new assignee…</option>
-      ${options}
-    </select>
-    <button class="btn btn-approve" data-action="reassign-confirm">Reassign</button>
-    <button class="btn btn-ghost"   data-action="reassign-cancel">Cancel</button>
-  `;
-
-  footer.querySelector("[data-action='reassign-confirm']").addEventListener("click", async () => {
-    const select = document.getElementById(`reassign-select-${proposalId}`);
-    const newUid = select.value;
-    if (!newUid) {
-      showToast("Please select an assignee.", "info");
-      return;
-    }
-    footer.querySelectorAll(".btn").forEach((b) => b.disabled = true);
-    try {
-      await api.reassignProposal(currentMeetingId, proposalId, newUid);
-      // Remove the card from own proposals
-      const cardEl = document.getElementById(`card-${proposalId}`);
-      if (cardEl) cardEl.remove();
-      ownProposals = ownProposals.filter((x) => x.id !== proposalId);
-      updateBulkActions();
-      showToast("Task reassigned.", "success");
-    } catch (err) {
-      showToast("Reassign failed: " + err.message, "error");
-      footer.querySelectorAll(".btn").forEach((b) => b.disabled = false);
-    }
-  });
-
-  footer.querySelector("[data-action='reassign-cancel']").addEventListener("click", () => {
-    const p = ownProposals.find((x) => x.id === proposalId);
-    if (p) restoreFooter(card, p);
-  });
 }
 
 async function applyAction(card, proposalId, action, title, description) {

@@ -121,9 +121,9 @@ export const api = {
   /** Returns all active TaskBot users for the reassign dropdown. */
   getActiveUsers: () => request("GET", "/users/active"),
 
-  /** Reassigns a pending proposal to another user. */
+  /** Reassigns a pending proposal to another user. Admin/PM only. */
   reassignProposal: (meetingId, taskId, newAssigneeUid) =>
-    request("POST", `/proposals/${encodeURIComponent(meetingId)}/${encodeURIComponent(taskId)}/reassign`, { newAssigneeUid }),
+    request("PATCH", `/proposals/${encodeURIComponent(meetingId)}/${encodeURIComponent(taskId)}/reassign`, { newAssigneeUid }),
 
   // ── Sync ──────────────────────────────────────────────────────────────────
   /** Triggers an immediate sync for the current user. Returns { synced, errors, deleted }. */
