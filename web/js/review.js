@@ -367,12 +367,12 @@ function buildCard(proposal) {
   } else if (proposal.status === "approved") {
     footerContent = `<span class="status-label approved">✓ Approved</span>`;
   } else if (proposal.status === "created") {
-    footerContent = `<span class="status-label created">✓ Created in Google Tasks — <a href="https://tasks.google.com/" target="_blank" rel="noopener">View</a></span>`;
+    footerContent = `<span class="status-label created">✓ Task created — <a href="https://tasks.google.com/" target="_blank" rel="noopener">View</a></span>`;
   } else if (proposal.status === "rejected") {
     footerContent = `<span class="status-label rejected">✗ Rejected</span>`;
   } else if (proposal.status === "failed") {
     footerContent = `
-      <span class="status-label failed">✗ Failed to create in Google Tasks</span>
+      <span class="status-label failed">✗ Task creation failed</span>
       <button class="btn btn-ghost" data-action="retry">Retry</button>
     `;
   } else if (proposal.status === "expired") {
@@ -629,7 +629,7 @@ async function applyAction(card, proposalId, action, title, description) {
 
     if (finalStatus === "approved") {
       const footer = document.getElementById(`footer-${proposalId}`);
-      footer.innerHTML = `<span class="status-label creating">⏳ Creating in Google Tasks...</span>`;
+      footer.innerHTML = `<span class="status-label creating">⏳ Creating task...</span>`;
       card.classList.add("approved");
       pollForTaskCreation(card, proposalId);
     } else {
@@ -651,12 +651,12 @@ function applyCardVisual(card, status, proposalId) {
   if (status === "approved") {
     footer.innerHTML = `<span class="status-label approved">✓ Approved</span>`;
   } else if (status === "created") {
-    footer.innerHTML = `<span class="status-label created">✓ Created in Google Tasks — <a href="https://tasks.google.com/" target="_blank" rel="noopener">View</a></span>`;
+    footer.innerHTML = `<span class="status-label created">✓ Task created — <a href="https://tasks.google.com/" target="_blank" rel="noopener">View</a></span>`;
   } else if (status === "rejected") {
     footer.innerHTML = `<span class="status-label rejected">✗ Rejected</span>`;
   } else if (status === "failed") {
     footer.innerHTML = `
-      <span class="status-label failed">✗ Failed to create in Google Tasks</span>
+      <span class="status-label failed">✗ Task creation failed</span>
       <button class="btn btn-ghost" data-action="retry">Retry</button>
     `;
   } else if (status === "expired") {
@@ -689,7 +689,7 @@ async function pollForTaskCreation(card, proposalId) {
       clearInterval(interval);
       const footer = document.getElementById(`footer-${proposalId}`);
       if (footer && card.dataset.status === "approved") {
-        footer.innerHTML = `<span class="status-label approved">✓ Approved — check Google Tasks shortly</span>`;
+        footer.innerHTML = `<span class="status-label approved">✓ Approved — task will be created shortly</span>`;
       }
     }
   }, INTERVAL_MS);
@@ -697,7 +697,7 @@ async function pollForTaskCreation(card, proposalId) {
 
 async function retryTaskCreation(card, proposalId) {
   const footer = document.getElementById(`footer-${proposalId}`);
-  footer.innerHTML = `<span class="status-label creating">⏳ Creating in Google Tasks...</span>`;
+  footer.innerHTML = `<span class="status-label creating">⏳ Creating task...</span>`;
   try {
     await api.updateProposal(currentMeetingId, proposalId, { status: "approved" });
     card.dataset.status = "approved";
