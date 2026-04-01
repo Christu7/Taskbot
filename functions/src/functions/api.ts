@@ -2,7 +2,7 @@ import * as admin from "firebase-admin";
 import { randomBytes } from "crypto";
 import { onRequest } from "firebase-functions/v2/https";
 import { logger } from "firebase-functions";
-import { FieldValue } from "firebase-admin/firestore";
+import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import express, { Request, Response, NextFunction } from "express";
 import { validateAndConsumeToken, generateApprovalToken } from "../services/approvalTokens";
 import { getUser, updateUser } from "../services/firestore";
@@ -28,6 +28,7 @@ import {
 import { getWorkspaces, getProjects } from "../services/asana/asanaApi";
 import { lookupUserByEmail } from "../services/slack/slackClient";
 import { getValidAccessToken } from "../auth";
+import { findNewTranscripts } from "../services/drive";
 import { completeExternalRefs, updateExternalRefs } from "../services/taskDestinations/taskRouter";
 import { syncUserNow } from "./syncEngine";
 import { getSecret, isIntegrationConfigured } from "../services/secrets";
@@ -1306,6 +1307,188 @@ app.get("/transcripts/awaiting", authenticate, async (req: Request, res: Respons
   if (byEmailSnap) for (const d of byEmailSnap.docs) ids.add(d.id);
 
   res.json({ count: ids.size });
+});
+
+// ─── POST /meetings/scan-history ──────────────────────────────────────────────
+// Retroactively scans the user's Drive for transcripts from the past N days and
+// queues any new ones for processing. Rate-limited to 1 call per user per hour.
+
+app.post("/meetings/scan-history", authenticate, async (req: Request, res: Response) => {
+  const uid = (req as AuthRequest).uid;
+  const { daysBack } = req.body as { daysBack?: number };
+
+  if (!daysBack || ![7, 30, 90].includes(daysBack)) {
+    res.status(400).json({ error: "daysBack must be 7, 30, or 90" });
+    return;
+  }
+
+  const user = await getUser(uid);
+  if (!user) { res.status(404).json({ error: "User not found" }); return; }
+
+  // Rate limit: 1 scan per hour
+  if (user.lastHistoryScanAt) {
+    const nextAllowedMs = (user.lastHistoryScanAt as Timestamp).toMillis() + 60 * 60 * 1000;
+    const minutesRemaining = Math.ceil((nextAllowedMs - Date.now()) / 60_000);
+    if (minutesRemaining > 0) {
+      res.status(429).json({
+        error: `Scan already requested. Try again in ${minutesRemaining} minute${minutesRemaining !== 1 ? "s" : ""}.`,
+        minutesRemaining,
+      });
+      return;
+    }
+  }
+
+  // Stamp the rate limit before the Drive call so concurrent requests are blocked
+  await updateUser(uid, { lastHistoryScanAt: FieldValue.serverTimestamp() as unknown as Timestamp });
+
+  let accessToken: string;
+  try {
+    accessToken = await getValidAccessToken(uid);
+  } catch {
+    res.status(400).json({ error: "Google account not connected. Please reconnect in Settings." });
+    return;
+  }
+
+  const sinceTimestamp = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000);
+
+  let transcripts;
+  try {
+    transcripts = await findNewTranscripts(accessToken, sinceTimestamp);
+  } catch (err) {
+    logger.error(`scan-history: Drive error for ${uid}`, { error: (err as Error).message });
+    res.status(500).json({ error: "Failed to scan Drive. Please try again." });
+    return;
+  }
+
+  let queued = 0;
+  let skipped = 0;
+
+  for (const transcript of transcripts) {
+    const docRef = db().collection("processedTranscripts").doc(transcript.fileId);
+    const existing = await docRef.get();
+    if (existing.exists) {
+      skipped++;
+      continue;
+    }
+
+    try {
+      await docRef.create({
+        driveFileId: transcript.fileId,
+        driveFileLink: transcript.webViewLink,
+        detectedByUid: uid,
+        meetingTitle: transcript.fileName,
+        detectedAt: FieldValue.serverTimestamp(),
+        status: "pending",
+        attendeeEmails: [user.email],
+        sourceType: "drive",
+      });
+      queued++;
+      logger.info(`scan-history: queued "${transcript.fileName}" (${transcript.fileId}) for user ${uid}`);
+    } catch (err) {
+      if ((err as { code?: string }).code === "already-exists") {
+        skipped++;
+      } else {
+        logger.error(`scan-history: failed to create doc for ${transcript.fileId}`, { error: (err as Error).message });
+      }
+    }
+  }
+
+  logger.info(`scan-history: user ${uid} — ${queued} queued, ${skipped} skipped`);
+  res.json({
+    queued,
+    skipped,
+    message: queued > 0
+      ? `${queued} transcript${queued !== 1 ? "s" : ""} queued for processing`
+      : "No new transcripts found in your Drive for that period.",
+  });
+});
+
+// ─── POST /meetings/submit-transcript ─────────────────────────────────────────
+// Accepts a pasted transcript and queues it for AI processing.
+// Rate-limited to 5 submissions per user per 24 hours.
+
+app.post("/meetings/submit-transcript", authenticate, async (req: Request, res: Response) => {
+  const uid = (req as AuthRequest).uid;
+  const { transcriptText, meetingTitle, meetingDate } = req.body as {
+    transcriptText?: string;
+    meetingTitle?: string;
+    meetingDate?: string;
+  };
+
+  // Field-level validation
+  const errors: Record<string, string> = {};
+  if (!transcriptText || transcriptText.length < 100) {
+    errors.transcriptText = "Transcript must be at least 100 characters.";
+  } else if (transcriptText.length > 500_000) {
+    errors.transcriptText = "Transcript must not exceed 500,000 characters.";
+  }
+  const titleTrimmed = (meetingTitle ?? "").trim();
+  if (!titleTrimmed) {
+    errors.meetingTitle = "Meeting title is required.";
+  } else if (titleTrimmed.length > 200) {
+    errors.meetingTitle = "Meeting title must not exceed 200 characters.";
+  }
+  if (!meetingDate || !/^\d{4}-\d{2}-\d{2}$/.test(meetingDate)) {
+    errors.meetingDate = "Meeting date is required (YYYY-MM-DD format).";
+  }
+  if (Object.keys(errors).length > 0) {
+    res.status(400).json({ errors });
+    return;
+  }
+
+  const user = await getUser(uid);
+  if (!user) { res.status(404).json({ error: "User not found" }); return; }
+
+  // Rate limit: 5 per 24 hours
+  const now = Date.now();
+  const subs = user.manualSubmissions;
+  if (subs && now < subs.resetAt.toMillis() && subs.count >= 5) {
+    res.status(429).json({ error: "You've submitted 5 transcripts today. Try again tomorrow." });
+    return;
+  }
+
+  // Duplicate check: same submitter + same title + same date
+  const dupSnap = await db()
+    .collection("processedTranscripts")
+    .where("submittedByUid", "==", uid)
+    .where("meetingTitle", "==", titleTrimmed)
+    .where("meetingDate", "==", meetingDate)
+    .limit(1)
+    .get();
+  if (!dupSnap.empty) {
+    res.status(409).json({ error: "A transcript for this meeting was already submitted." });
+    return;
+  }
+
+  // Update rate limit counter (reset window if expired)
+  const isWindowExpired = !subs || now >= subs.resetAt.toMillis();
+  await updateUser(uid, {
+    manualSubmissions: {
+      count: isWindowExpired ? 1 : subs!.count + 1,
+      resetAt: isWindowExpired
+        ? Timestamp.fromMillis(now + 24 * 60 * 60 * 1000)
+        : subs!.resetAt,
+    },
+  });
+
+  const docId = `manual_${uid}_${Date.now()}`;
+  await db().collection("processedTranscripts").doc(docId).set({
+    driveFileId: docId,
+    driveFileLink: "",
+    sourceType: "manual_submission",
+    detectedByUid: uid,
+    submittedByUid: uid,
+    meetingTitle: titleTrimmed,
+    meetingDate,
+    detectedAt: FieldValue.serverTimestamp(),
+    status: "pending",
+    attendeeEmails: [],
+    cachedTranscriptText: transcriptText,
+    isManual: true,
+  });
+
+  logger.info(`submit-transcript: user ${uid} submitted "${titleTrimmed}" (${docId})`);
+  res.json({ meetingId: docId, message: "Transcript submitted for processing." });
 });
 
 // ─── Admin Routes ─────────────────────────────────────────────────────────────

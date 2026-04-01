@@ -12,6 +12,20 @@ const awaitingBanner = document.getElementById("awaiting-banner");
 const logoutBtn  = document.getElementById("logout-btn");
 const refreshBtn = document.getElementById("refresh-btn");
 
+// Submit transcript modal elements
+const submitTranscriptBtn = document.getElementById("submit-transcript-btn");
+const submitModal         = document.getElementById("submit-modal");
+const modalTitle          = document.getElementById("modal-title");
+const modalDate           = document.getElementById("modal-date");
+const modalTranscript     = document.getElementById("modal-transcript");
+const modalCharCount      = document.getElementById("modal-char-count");
+const modalError          = document.getElementById("modal-error");
+const modalTitleErr       = document.getElementById("modal-title-err");
+const modalDateErr        = document.getElementById("modal-date-err");
+const modalTranscriptErr  = document.getElementById("modal-transcript-err");
+const modalCancelBtn      = document.getElementById("modal-cancel-btn");
+const modalSubmitBtn      = document.getElementById("modal-submit-btn");
+
 // ─── Boot ─────────────────────────────────────────────────────────────────────
 
 const user = await requireAuth();
@@ -135,3 +149,102 @@ function esc(str) {
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
   }[c]));
 }
+
+// ─── Submit Transcript Modal ───────────────────────────────────────────────────
+
+// Set max date to today
+modalDate.max = new Date().toISOString().split("T")[0];
+
+function openModal() {
+  submitModal.hidden = false;
+  modalError.hidden = true;
+  modalTitleErr.hidden = true;
+  modalDateErr.hidden = true;
+  modalTranscriptErr.hidden = true;
+  modalTitle.value = "";
+  modalDate.value = new Date().toISOString().split("T")[0];
+  modalTranscript.value = "";
+  modalCharCount.textContent = "0";
+  modalSubmitBtn.disabled = false;
+  modalSubmitBtn.textContent = "Process Transcript";
+  modalCancelBtn.disabled = false;
+  modalTitle.focus();
+}
+
+function closeModal() {
+  submitModal.hidden = true;
+}
+
+submitTranscriptBtn.addEventListener("click", openModal);
+modalCancelBtn.addEventListener("click", closeModal);
+
+// Close modal on backdrop click
+submitModal.addEventListener("click", (e) => {
+  if (e.target === submitModal) closeModal();
+});
+
+// Live character count
+modalTranscript.addEventListener("input", () => {
+  modalCharCount.textContent = modalTranscript.value.length.toLocaleString();
+});
+
+modalSubmitBtn.addEventListener("click", async () => {
+  // Clear previous errors
+  modalError.hidden = true;
+  modalTitleErr.hidden = true;
+  modalDateErr.hidden = true;
+  modalTranscriptErr.hidden = true;
+
+  const title = modalTitle.value.trim();
+  const date  = modalDate.value;
+  const text  = modalTranscript.value;
+
+  // Client-side validation
+  let hasError = false;
+  if (!title) {
+    modalTitleErr.textContent = "Meeting title is required.";
+    modalTitleErr.hidden = false;
+    hasError = true;
+  }
+  if (!date) {
+    modalDateErr.textContent = "Meeting date is required.";
+    modalDateErr.hidden = false;
+    hasError = true;
+  }
+  if (text.length < 100) {
+    modalTranscriptErr.textContent = "Transcript must be at least 100 characters.";
+    modalTranscriptErr.hidden = false;
+    hasError = true;
+  } else if (text.length > 500_000) {
+    modalTranscriptErr.textContent = "Transcript must not exceed 500,000 characters.";
+    modalTranscriptErr.hidden = false;
+    hasError = true;
+  }
+  if (hasError) return;
+
+  modalSubmitBtn.disabled = true;
+  modalSubmitBtn.textContent = "Submitting…";
+  modalCancelBtn.disabled = true;
+
+  try {
+    await api.submitTranscript({ transcriptText: text, meetingTitle: title, meetingDate: date });
+    closeModal();
+    showToast(
+      "Transcript submitted! Proposals will appear here once processed (usually under 1 minute).",
+      "success"
+    );
+  } catch (err) {
+    const msg = err.message ?? "Something went wrong.";
+    if (msg.includes("already submitted")) {
+      modalError.textContent = "You already submitted a transcript for this meeting.";
+    } else if (msg.includes("5 transcripts today")) {
+      modalError.textContent = "You've submitted 5 transcripts today. Try again tomorrow.";
+    } else {
+      modalError.textContent = "Submission failed. Please try again.";
+    }
+    modalError.hidden = false;
+    modalSubmitBtn.disabled = false;
+    modalSubmitBtn.textContent = "Process Transcript";
+    modalCancelBtn.disabled = false;
+  }
+});

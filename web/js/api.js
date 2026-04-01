@@ -232,6 +232,15 @@ export const api = {
     return res; // Caller receives raw Response to handle the Blob download
   },
 
+  // ── Retroactive processing ────────────────────────────────────────────────
+  /** Scans Drive for transcripts from the past N days (7, 30, or 90) and queues new ones. */
+  scanHistory: (daysBack) =>
+    request("POST", "/meetings/scan-history", { daysBack }),
+
+  /** Submits a pasted transcript for AI processing. */
+  submitTranscript: (body) =>
+    request("POST", "/meetings/submit-transcript", body),
+
   // ── Transcripts status (dashboard banner) ────────────────────────────────
   /** Returns { count } of transcripts stuck in awaiting_configuration. */
   getAwaitingCount: () => request("GET", "/transcripts/awaiting"),

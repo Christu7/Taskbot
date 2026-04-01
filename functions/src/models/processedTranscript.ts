@@ -80,8 +80,26 @@ export interface ProcessedTranscriptDocument {
    *
    * "drive"               — Detected in the user's Google Drive by driveWatcher.
    * "gmail_gemini_notes"  — Detected in Gmail by gmailWatcher (Gemini Notes email).
+   * "manual_submission"   — Submitted directly by a user via the dashboard.
    */
-  sourceType?: "drive" | "gmail_gemini_notes";
+  sourceType?: "drive" | "gmail_gemini_notes" | "manual_submission";
+  /**
+   * True when this document was created by a user pasting transcript text directly
+   * (not detected from Drive or Gmail). When true, attendeeEmails is empty and
+   * proposals are created only for the submitting user.
+   */
+  isManual?: boolean;
+  /**
+   * UID of the user who submitted this transcript manually.
+   * Only present when isManual === true.
+   */
+  submittedByUid?: string;
+  /**
+   * ISO date (YYYY-MM-DD) of the meeting, supplied by the user on manual submission.
+   * Used as the meetingDate in the AI extraction context instead of deriving it
+   * from detectedAt, which would be the submission time rather than the meeting date.
+   */
+  meetingDate?: string;
   /**
    * Pre-fetched transcript text.  Set by gmailWatcher so processTranscript
    * can skip the Drive API fetch entirely for Gmail-sourced documents.

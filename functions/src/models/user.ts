@@ -108,6 +108,16 @@ export interface UserDocument {
   promotedBy?: string;
   /** When the role was last changed. */
   promotedAt?: Timestamp;
+  /**
+   * When the user last triggered a retroactive Drive history scan.
+   * Used to enforce the 1-per-hour rate limit on POST /api/meetings/scan-history.
+   */
+  lastHistoryScanAt?: Timestamp;
+  /**
+   * Daily counter for manual transcript submissions (POST /api/meetings/submit-transcript).
+   * Resets 24 hours after the first submission in each window.
+   */
+  manualSubmissions?: { count: number; resetAt: Timestamp };
   /** When the document was first created. */
   createdAt: Timestamp;
   /** When the document was last updated. */

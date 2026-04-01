@@ -6,7 +6,7 @@ import { ProcessedTranscriptDocument } from "../models/processedTranscript";
 import { MeetingContext, ExtractedTask } from "../models/aiExtraction";
 import { getValidAccessToken } from "../auth";
 import { getTranscriptContent, TranscriptContent } from "../services/drive";
-import { getUserByEmail } from "../services/firestore";
+import { getUser, getUserByEmail } from "../services/firestore";
 import { UserDocument } from "../models/user";
 import { extractTasksFromTranscript } from "../services/aiExtractor";
 import { AIExtractionError, TranscriptNotFoundError } from "../utils/errors";
@@ -94,7 +94,8 @@ export const processTranscript = onDocumentCreated(
         );
         transcriptContent = {
           transcript: transcriptDoc.cachedTranscriptText,
-          format: "gemini_notes",
+          // Manual submissions are plain text; Gmail-sourced docs use Gemini Notes format.
+          format: transcriptDoc.isManual ? "plain_transcript" : "gemini_notes",
         };
       } else {
         logger.info(`processTranscript: fetching transcript from Drive (file ${meetingId})`);
@@ -133,10 +134,24 @@ export const processTranscript = onDocumentCreated(
       // ── Step 2: Build MeetingContext from stored attendee data ─────────
       await docRef.update({ status: "extracting" });
 
+      // For manual submissions with no attendees, fall back to the submitting user —
+      // they are the only person who should receive proposals from their own paste.
+      let effectiveAttendeeEmails = [...transcriptDoc.attendeeEmails];
+      if (transcriptDoc.isManual && effectiveAttendeeEmails.length === 0 && transcriptDoc.submittedByUid) {
+        const submitter = await getUser(transcriptDoc.submittedByUid);
+        if (submitter?.email) {
+          effectiveAttendeeEmails = [submitter.email];
+          logger.info(
+            `processTranscript: manual submission ${meetingId} — ` +
+            `using submitting user ${transcriptDoc.submittedByUid} as sole attendee`
+          );
+        }
+      }
+
       // Resolve attendee emails to display names using the users collection
       const attendeeUserDocs = (
         await Promise.all(
-          transcriptDoc.attendeeEmails.map((email) => getUserByEmail(email))
+          effectiveAttendeeEmails.map((email) => getUserByEmail(email))
         )
       ).filter((u): u is UserDocument => u !== null);
 
@@ -144,10 +159,12 @@ export const processTranscript = onDocumentCreated(
       // and can populate assigneeEmail in the extracted tasks.
       const attendeeNames = attendeeUserDocs.length > 0
         ? attendeeUserDocs.map((u) => `${u.displayName || u.email} <${u.email}>`)
-        : transcriptDoc.attendeeEmails; // fall back to raw emails if no user docs found
+        : effectiveAttendeeEmails; // fall back to raw emails if no user docs found
 
-      // Derive the meeting date from detectedAt (best approximation without Calendar data)
-      const meetingDate = transcriptDoc.detectedAt.toDate().toISOString().split("T")[0];
+      // For manual submissions, use the user-supplied meeting date; otherwise derive
+      // it from detectedAt (the best approximation when Calendar data is unavailable).
+      const meetingDate = transcriptDoc.meetingDate
+        ?? transcriptDoc.detectedAt.toDate().toISOString().split("T")[0];
 
       const context: MeetingContext = {
         meetingTitle: transcriptDoc.meetingTitle,

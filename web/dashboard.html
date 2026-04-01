@@ -40,7 +40,48 @@
 
       <div class="page-header">
         <h1 class="page-title">Pending Approvals</h1>
-        <button id="refresh-btn" class="btn btn-ghost" style="font-size:13px;padding:6px 12px;">Refresh</button>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <button id="submit-transcript-btn" class="btn btn-ghost" style="font-size:13px;padding:6px 12px;">Submit a Transcript Manually</button>
+          <button id="refresh-btn" class="btn btn-ghost" style="font-size:13px;padding:6px 12px;">Refresh</button>
+        </div>
+      </div>
+
+      <!-- Submit Transcript Modal -->
+      <div id="submit-modal" hidden style="position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:100;display:flex;align-items:center;justify-content:center;padding:16px;">
+        <div style="background:#fff;border-radius:12px;padding:28px;width:100%;max-width:540px;max-height:90vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,0.2);">
+          <h2 style="margin:0 0 20px;font-size:18px;font-weight:600;">Submit a Transcript</h2>
+
+          <div style="display:flex;flex-direction:column;gap:14px;">
+            <div>
+              <label style="display:block;font-size:13px;font-weight:500;margin-bottom:4px;" for="modal-title">Meeting title</label>
+              <input type="text" id="modal-title" placeholder="e.g. Weekly standup - March 25"
+                style="width:100%;box-sizing:border-box;font-size:13px;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;" />
+              <div id="modal-title-err" style="font-size:12px;color:#991b1b;margin-top:3px;" hidden></div>
+            </div>
+
+            <div>
+              <label style="display:block;font-size:13px;font-weight:500;margin-bottom:4px;" for="modal-date">Meeting date</label>
+              <input type="date" id="modal-date"
+                style="font-size:13px;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;" />
+              <div id="modal-date-err" style="font-size:12px;color:#991b1b;margin-top:3px;" hidden></div>
+            </div>
+
+            <div>
+              <label style="display:block;font-size:13px;font-weight:500;margin-bottom:4px;" for="modal-transcript">Transcript text</label>
+              <textarea id="modal-transcript" rows="10" placeholder="Paste the transcript text here…"
+                style="width:100%;box-sizing:border-box;font-size:13px;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;resize:vertical;font-family:inherit;"></textarea>
+              <div style="font-size:12px;color:#6b7280;margin-top:3px;"><span id="modal-char-count">0</span> / 500,000 characters</div>
+              <div id="modal-transcript-err" style="font-size:12px;color:#991b1b;margin-top:3px;" hidden></div>
+            </div>
+
+            <div id="modal-error" hidden style="font-size:13px;color:#991b1b;padding:8px 12px;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;"></div>
+
+            <div style="display:flex;gap:10px;justify-content:flex-end;padding-top:4px;">
+              <button id="modal-cancel-btn" class="btn btn-ghost">Cancel</button>
+              <button id="modal-submit-btn" class="btn btn-primary">Process Transcript</button>
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- Loading -->

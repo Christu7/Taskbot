@@ -218,6 +218,35 @@
 
       </div>
 
+        <!-- Process Past Meetings section -->
+        <div class="settings-section">
+          <div class="settings-section-title">Process Past Meetings</div>
+          <p class="setting-desc" style="padding:0 0 12px 0;margin:0;">
+            MeetBot processes new transcripts automatically. Use this to process older
+            meetings that were missed.
+          </p>
+
+          <div class="setting-row">
+            <div>
+              <div class="setting-label">How far back?</div>
+            </div>
+            <select id="scan-days-back">
+              <option value="7">Last 7 days</option>
+              <option value="30">Last 30 days</option>
+              <option value="90">Last 90 days</option>
+            </select>
+          </div>
+
+          <div class="setting-row" style="border-top:none;padding-top:0;">
+            <div></div>
+            <button id="scan-history-btn" class="btn btn-ghost">Scan Drive for Past Transcripts</button>
+          </div>
+
+          <div id="scan-status" hidden style="padding:8px 0 4px 0;font-size:13px;"></div>
+        </div>
+
+      </div>
+
 
     </div>
   </main>

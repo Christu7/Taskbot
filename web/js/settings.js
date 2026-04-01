@@ -420,4 +420,64 @@ function updateNotifyWarning(slackConnected) {
   notifySlackWarning.hidden = !(slackChecked && !slackConnected);
 }
 
+// ─── Scan Drive history ────────────────────────────────────────────────────────
 
+const scanHistoryBtn = document.getElementById("scan-history-btn");
+const scanDaysBackEl = document.getElementById("scan-days-back");
+const scanStatusEl   = document.getElementById("scan-status");
+
+const SCAN_COOLDOWN_KEY = "meetbot_last_scan_ts";
+
+function getScanCooldownRemaining() {
+  const ts = parseInt(localStorage.getItem(SCAN_COOLDOWN_KEY) ?? "0", 10);
+  if (!ts) return 0;
+  return Math.max(0, Math.ceil((ts + 60 * 60 * 1000 - Date.now()) / 60_000));
+}
+
+function applyScanCooldown() {
+  const remaining = getScanCooldownRemaining();
+  if (remaining > 0) {
+    scanHistoryBtn.disabled = true;
+    scanHistoryBtn.textContent = `Scan Drive for Past Transcripts (available in ${remaining}m)`;
+  } else {
+    scanHistoryBtn.disabled = false;
+    scanHistoryBtn.textContent = "Scan Drive for Past Transcripts";
+  }
+}
+
+applyScanCooldown();
+
+scanHistoryBtn.addEventListener("click", async () => {
+  const daysBack = parseInt(scanDaysBackEl.value, 10);
+  scanHistoryBtn.disabled = true;
+  scanHistoryBtn.textContent = "Scanning…";
+  scanStatusEl.hidden = false;
+  scanStatusEl.className = "";
+  scanStatusEl.innerHTML = '<span class="loading-spinner"></span> Scanning your Drive…';
+
+  try {
+    const result = await api.scanHistory(daysBack);
+    localStorage.setItem(SCAN_COOLDOWN_KEY, String(Date.now()));
+
+    scanStatusEl.textContent = result.queued > 0
+      ? `${result.queued} transcript${result.queued !== 1 ? "s" : ""} queued for processing. Check your dashboard in a few minutes.`
+      : "No new transcripts found for that period.";
+    scanStatusEl.style.color = "#166534";
+
+    applyScanCooldown();
+  } catch (err) {
+    const status = err.status ?? 0;
+    if (err.message?.includes("Try again in")) {
+      // 429 — extract minutes from error message
+      scanStatusEl.textContent = `Scan already in progress. ${err.message}`;
+      scanStatusEl.style.color = "#92400e";
+      localStorage.setItem(SCAN_COOLDOWN_KEY, String(Date.now()));
+      applyScanCooldown();
+    } else {
+      scanStatusEl.textContent = "Scan failed. Please try again.";
+      scanStatusEl.style.color = "#991b1b";
+      scanHistoryBtn.disabled = false;
+      scanHistoryBtn.textContent = "Scan Drive for Past Transcripts";
+    }
+  }
+});
