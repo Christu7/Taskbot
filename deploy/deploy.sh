@@ -160,6 +160,16 @@ if [[ -n "$HOSTING_SITE" && ( -z "$ONLY_FLAG" || "$ONLY_FLAG" == "--only hosting
   fi
 fi
 
+# ── CI/CD Auth Setup (GitHub Actions WIF) ────────────────────────────────────
+# WIF authenticates to Google Cloud via gcloud, but Firebase CLI doesn't pick
+# up those credentials by default. Point it at gcloud's ADC file explicitly.
+if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
+  printf "Setting up CI authentication... "
+  gcloud auth application-default set-quota-project "$PROJECT_ID" 2>/dev/null || true
+  export GOOGLE_APPLICATION_CREDENTIALS="${HOME}/.config/gcloud/application_default_credentials.json"
+  green "done"
+fi
+
 # Deploy
 printf "Deploying to %s... " "$PROJECT_ID"
 # shellcheck disable=SC2086
