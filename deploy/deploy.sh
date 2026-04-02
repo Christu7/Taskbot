@@ -164,10 +164,7 @@ fi
 # WIF authenticates to Google Cloud via gcloud, but Firebase CLI doesn't pick
 # up those credentials by default. Point it at gcloud's ADC file explicitly.
 if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
-  printf "Setting up CI authentication... "
-  gcloud auth application-default set-quota-project "$PROJECT_ID" 2>/dev/null || true
-  export GOOGLE_APPLICATION_CREDENTIALS="${HOME}/.config/gcloud/application_default_credentials.json"
-  green "done"
+  printf "CI auth already provided by google-github-actions/auth\n"
 fi
 
 # Deploy
