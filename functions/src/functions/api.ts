@@ -33,11 +33,7 @@ import { completeExternalRefs, updateExternalRefs } from "../services/taskDestin
 import { syncUserNow } from "./syncEngine";
 import { getSecret, isIntegrationConfigured } from "../services/secrets";
 import multer from "multer";
-// mammoth has no @types package; declare the minimal surface we use.
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const mammoth = require("mammoth") as {
-  extractRawText: (input: { buffer: Buffer }) => Promise<{ value: string }>;
-};
+import * as mammoth from "mammoth";
 
 const db = () => admin.firestore();
 
