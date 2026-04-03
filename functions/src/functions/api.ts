@@ -28,7 +28,7 @@ import {
 import { getWorkspaces, getProjects } from "../services/asana/asanaApi";
 import { lookupUserByEmail } from "../services/slack/slackClient";
 import { getValidAccessToken } from "../auth";
-import { findNewTranscripts } from "../services/drive";
+import { findNewTranscripts, findTranscriptsInRange } from "../services/drive";
 import { completeExternalRefs, updateExternalRefs } from "../services/taskDestinations/taskRouter";
 import { syncUserNow } from "./syncEngine";
 import { getSecret, isIntegrationConfigured } from "../services/secrets";
@@ -1307,6 +1307,160 @@ app.get("/transcripts/awaiting", authenticate, async (req: Request, res: Respons
   if (byEmailSnap) for (const d of byEmailSnap.docs) ids.add(d.id);
 
   res.json({ count: ids.size });
+});
+
+// ─── POST /meetings/scan-history-preview ─────────────────────────────────────
+// Read-only scan: returns candidate transcripts in a date range WITHOUT creating
+// any Firestore documents or triggering processing. Pure preview — no side effects.
+
+app.post("/meetings/scan-history-preview", authenticate, async (req: Request, res: Response) => {
+  const uid = (req as AuthRequest).uid;
+  const { fromDate, toDate } = req.body as { fromDate?: string; toDate?: string };
+
+  // Validate presence and ISO format
+  if (!fromDate || !toDate) {
+    res.status(400).json({ error: "fromDate and toDate are required." });
+    return;
+  }
+  const from = new Date(fromDate);
+  const to   = new Date(toDate);
+  if (isNaN(from.getTime()) || isNaN(to.getTime())) {
+    res.status(400).json({ error: "fromDate and toDate must be valid ISO date strings." });
+    return;
+  }
+  if (from > to) {
+    res.status(400).json({ error: "fromDate must be on or before toDate." });
+    return;
+  }
+
+  // Expand date-only strings (YYYY-MM-DD) to cover the full day in UTC
+  const fromMs = new Date(fromDate.length === 10 ? fromDate + "T00:00:00.000Z" : fromDate).getTime();
+  const toMs   = new Date(toDate.length   === 10 ? toDate   + "T23:59:59.999Z" : toDate).getTime();
+
+  let accessToken: string;
+  try {
+    accessToken = await getValidAccessToken(uid);
+  } catch {
+    res.status(400).json({ error: "Google account not connected. Please reconnect in Settings." });
+    return;
+  }
+
+  let transcripts;
+  try {
+    transcripts = await findTranscriptsInRange(
+      accessToken,
+      new Date(fromMs),
+      new Date(toMs)
+    );
+  } catch (err) {
+    logger.error(`scan-history-preview: Drive error for ${uid}`, { error: (err as Error).message });
+    res.status(500).json({ error: "Failed to scan Drive. Please try again." });
+    return;
+  }
+
+  // Check each candidate against processedTranscripts — read-only, no writes
+  const meetings = await Promise.all(
+    transcripts.map(async (t) => {
+      const snap = await db().collection("processedTranscripts").doc(t.fileId).get();
+      return {
+        id: t.fileId,
+        title: t.fileName,
+        date: t.createdTime,
+        source: "drive" as const,
+        alreadyProcessed: snap.exists,
+        driveFileLink: t.webViewLink,
+      };
+    })
+  );
+
+  logger.info(
+    `scan-history-preview: user ${uid} — ${meetings.length} candidate(s) in range ` +
+    `${fromDate} → ${toDate}`
+  );
+  res.json({ meetings });
+});
+
+// ─── POST /meetings/process-history-selection ────────────────────────────────
+// Queues a user-selected list of meetings (from scan-history-preview) for
+// processing by creating processedTranscripts documents. The Firestore onCreate
+// trigger fires automatically for each new "pending" document.
+// Idempotent: existing documents are silently skipped, not overwritten.
+
+app.post("/meetings/process-history-selection", authenticate, async (req: Request, res: Response) => {
+  const uid = (req as AuthRequest).uid;
+
+  interface MeetingInput {
+    id?: string;
+    title?: string;
+    date?: string;
+    source?: string;
+    driveFileLink?: string;
+  }
+
+  const { meetings } = req.body as { meetings?: MeetingInput[] };
+
+  if (!Array.isArray(meetings) || meetings.length === 0) {
+    res.json({ created: 0, skipped: 0 });
+    return;
+  }
+
+  const user = await getUser(uid);
+  if (!user) { res.status(404).json({ error: "User not found" }); return; }
+
+  let created = 0;
+  let skipped = 0;
+
+  for (const meeting of meetings) {
+    // Skip malformed entries without crashing the entire request
+    if (!meeting?.id || typeof meeting.id !== "string") {
+      skipped++;
+      continue;
+    }
+
+    const docRef = db().collection("processedTranscripts").doc(meeting.id);
+
+    // Dedup check — skip if already recorded in any status
+    const existing = await docRef.get();
+    if (existing.exists) {
+      skipped++;
+      continue;
+    }
+
+    try {
+      // Use .create() for atomic idempotency: if two requests race, only one wins;
+      // the other gets "already-exists" and is counted as skipped.
+      await docRef.create({
+        driveFileId: meeting.id,
+        driveFileLink: meeting.driveFileLink ?? "",
+        detectedByUid: uid,
+        meetingTitle: meeting.title ?? meeting.id,
+        detectedAt: FieldValue.serverTimestamp(),
+        status: "pending",
+        // Include the requesting user so the pipeline has at least one attendee to
+        // resolve tasks against (same fallback pattern as driveWatcher and scan-history).
+        attendeeEmails: [user.email],
+        sourceType: (meeting.source === "gmail_gemini_notes" ? "gmail_gemini_notes" : "drive") as "drive" | "gmail_gemini_notes",
+      });
+      created++;
+      logger.info(
+        `process-history-selection: queued "${meeting.title ?? meeting.id}" (${meeting.id}) for user ${uid}`
+      );
+    } catch (err) {
+      if ((err as { code?: string }).code === "already-exists") {
+        // Race condition — another request created the doc between our .get() and .create()
+        skipped++;
+      } else {
+        logger.error(
+          `process-history-selection: failed to create doc for ${meeting.id}`,
+          { error: (err as Error).message }
+        );
+        skipped++;
+      }
+    }
+  }
+
+  logger.info(`process-history-selection: user ${uid} — ${created} created, ${skipped} skipped`);
+  res.json({ created, skipped });
 });
 
 // ─── POST /meetings/scan-history ──────────────────────────────────────────────

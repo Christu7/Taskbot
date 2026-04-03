@@ -420,64 +420,257 @@ function updateNotifyWarning(slackConnected) {
   notifySlackWarning.hidden = !(slackChecked && !slackConnected);
 }
 
-// ─── Scan Drive history ────────────────────────────────────────────────────────
+// ─── Scan Drive history (preview → select → process) ──────────────────────────
 
-const scanHistoryBtn = document.getElementById("scan-history-btn");
-const scanDaysBackEl = document.getElementById("scan-days-back");
-const scanStatusEl   = document.getElementById("scan-status");
+const scanHistoryBtn     = document.getElementById("scan-history-btn");
+const scanFromEl         = document.getElementById("scan-from-date");
+const scanToEl           = document.getElementById("scan-to-date");
+const scanDateErrorEl    = document.getElementById("scan-date-error");
+const scanStatusEl       = document.getElementById("scan-status");
+const scanResultsEl      = document.getElementById("scan-results");
+const scanResultsListEl  = document.getElementById("scan-results-list");
+const scanResultsCountEl = document.getElementById("scan-results-count");
+const scanSelectAllEl    = document.getElementById("scan-select-all");
+const processSelectedBtn = document.getElementById("process-selected-btn");
+const processAllBtn      = document.getElementById("process-all-btn");
+const processStatusEl    = document.getElementById("process-status");
+const batchWarningEl     = document.getElementById("batch-warning");
 
-const SCAN_COOLDOWN_KEY = "meetbot_last_scan_ts";
+// State
+let scanResults = []; // { id, title, date, source, driveFileLink, alreadyProcessed }
+const selectedIds = new Set();
 
-function getScanCooldownRemaining() {
-  const ts = parseInt(localStorage.getItem(SCAN_COOLDOWN_KEY) ?? "0", 10);
-  if (!ts) return 0;
-  return Math.max(0, Math.ceil((ts + 60 * 60 * 1000 - Date.now()) / 60_000));
+// Default range: last 30 days (uses local browser date)
+(function initDateRange() {
+  const now = new Date();
+  const localToday = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  const from = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 30);
+  const localFrom = `${from.getFullYear()}-${String(from.getMonth() + 1).padStart(2, "0")}-${String(from.getDate()).padStart(2, "0")}`;
+  scanToEl.value   = localToday;
+  scanFromEl.value = localFrom;
+})();
+
+function formatDate(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
 }
 
-function applyScanCooldown() {
-  const remaining = getScanCooldownRemaining();
-  if (remaining > 0) {
-    scanHistoryBtn.disabled = true;
-    scanHistoryBtn.textContent = `Scan Drive for Past Transcripts (available in ${remaining}m)`;
+function showDateError(msg) {
+  scanDateErrorEl.textContent = msg;
+  scanDateErrorEl.hidden = false;
+}
+
+function clearDateError() {
+  scanDateErrorEl.hidden = true;
+  scanDateErrorEl.textContent = "";
+}
+
+const BATCH_WARN_THRESHOLD = 20;
+
+function updateSelectionState() {
+  const newMeetings = scanResults.filter(m => !m.alreadyProcessed);
+  const selectedCount = newMeetings.filter(m => selectedIds.has(m.id)).length;
+
+  processSelectedBtn.disabled = selectedCount === 0;
+  processSelectedBtn.textContent = selectedCount > 0
+    ? `Process selected (${selectedCount})`
+    : "Process selected";
+  processAllBtn.disabled = newMeetings.length === 0;
+
+  const allNewSelected = newMeetings.length > 0 && newMeetings.every(m => selectedIds.has(m.id));
+  scanSelectAllEl.checked = allNewSelected;
+  scanSelectAllEl.indeterminate = !allNewSelected && selectedCount > 0;
+
+  // Large-batch warning: trigger on selected count, or on all-new count when nothing selected
+  const relevantCount = selectedCount > 0 ? selectedCount : newMeetings.length;
+  if (relevantCount >= BATCH_WARN_THRESHOLD) {
+    batchWarningEl.textContent = "Warning: processing many meetings may consume significant AI tokens.";
+    batchWarningEl.hidden = false;
   } else {
-    scanHistoryBtn.disabled = false;
-    scanHistoryBtn.textContent = "Scan Drive for Past Transcripts";
+    batchWarningEl.hidden = true;
   }
 }
 
-applyScanCooldown();
+function setRowCheckboxesDisabled(disabled) {
+  scanSelectAllEl.disabled = disabled;
+  for (const cb of scanResultsListEl.querySelectorAll("input[type=\"checkbox\"]")) {
+    // When re-enabling, keep already-processed rows disabled
+    cb.disabled = disabled ? true : cb.dataset.alreadyProcessed === "1";
+  }
+}
+
+function renderScanResults() {
+  const newMeetings = scanResults.filter(m => !m.alreadyProcessed);
+  scanResultsCountEl.textContent = `${scanResults.length} found · ${newMeetings.length} new`;
+
+  scanResultsListEl.innerHTML = "";
+  if (scanResults.length === 0) {
+    scanResultsListEl.innerHTML =
+      '<div style="padding:16px;text-align:center;color:#6b7280;">No meetings found in this date range.</div>';
+    updateSelectionState();
+    return;
+  }
+
+  for (const meeting of scanResults) {
+    const row = document.createElement("div");
+    row.style.cssText =
+      "display:flex;align-items:center;gap:12px;padding:8px 12px;" +
+      "border-bottom:1px solid #f3f4f6;";
+
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.disabled = meeting.alreadyProcessed;
+    cb.checked = selectedIds.has(meeting.id);
+    cb.dataset.alreadyProcessed = meeting.alreadyProcessed ? "1" : "";
+    cb.addEventListener("change", () => {
+      if (cb.checked) selectedIds.add(meeting.id);
+      else selectedIds.delete(meeting.id);
+      updateSelectionState();
+    });
+
+    const titleSpan = document.createElement("span");
+    titleSpan.textContent = meeting.title || meeting.id;
+    titleSpan.style.flex = "1";
+    if (meeting.driveFileLink) {
+      const a = document.createElement("a");
+      a.href = meeting.driveFileLink;
+      a.target = "_blank";
+      a.rel = "noopener";
+      a.textContent = meeting.title || meeting.id;
+      a.style.color = "inherit";
+      titleSpan.textContent = "";
+      titleSpan.appendChild(a);
+    }
+
+    const dateSpan = document.createElement("span");
+    dateSpan.textContent = formatDate(meeting.date);
+    dateSpan.style.cssText = "color:#6b7280;min-width:100px;";
+
+    const sourceSpan = document.createElement("span");
+    sourceSpan.textContent = meeting.source === "gmail_gemini_notes" ? "Gemini Notes" : "Drive";
+    sourceSpan.style.cssText = "color:#6b7280;min-width:80px;";
+
+    const statusSpan = document.createElement("span");
+    if (meeting.alreadyProcessed) {
+      statusSpan.textContent = "Already processed";
+      statusSpan.style.cssText = "color:#9ca3af;font-size:11px;min-width:100px;";
+    } else {
+      statusSpan.textContent = "New";
+      statusSpan.style.cssText = "color:#166534;font-size:11px;font-weight:600;min-width:100px;";
+    }
+
+    row.append(cb, titleSpan, dateSpan, sourceSpan, statusSpan);
+    scanResultsListEl.appendChild(row);
+  }
+
+  updateSelectionState();
+}
+
+scanSelectAllEl.addEventListener("change", () => {
+  const newMeetings = scanResults.filter(m => !m.alreadyProcessed);
+  if (scanSelectAllEl.checked) {
+    for (const m of newMeetings) selectedIds.add(m.id);
+  } else {
+    for (const m of newMeetings) selectedIds.delete(m.id);
+  }
+  renderScanResults();
+});
 
 scanHistoryBtn.addEventListener("click", async () => {
-  const daysBack = parseInt(scanDaysBackEl.value, 10);
+  const fromDate = scanFromEl.value;
+  const toDate   = scanToEl.value;
+
+  clearDateError();
+
+  if (!fromDate || !toDate) {
+    showDateError("Please select both dates.");
+    return;
+  }
+  if (fromDate > toDate) {
+    showDateError("From date must be before or equal to To date.");
+    return;
+  }
+
   scanHistoryBtn.disabled = true;
   scanHistoryBtn.textContent = "Scanning…";
+  scanFromEl.disabled = true;
+  scanToEl.disabled = true;
   scanStatusEl.hidden = false;
-  scanStatusEl.className = "";
+  scanStatusEl.style.color = "";
   scanStatusEl.innerHTML = '<span class="loading-spinner"></span> Scanning your Drive…';
+  scanResultsEl.hidden = true;
+  scanResults = [];
+  selectedIds.clear();
+  processStatusEl.hidden = true;
+  batchWarningEl.hidden = true;
 
   try {
-    const result = await api.scanHistory(daysBack);
-    localStorage.setItem(SCAN_COOLDOWN_KEY, String(Date.now()));
-
-    scanStatusEl.textContent = result.queued > 0
-      ? `${result.queued} transcript${result.queued !== 1 ? "s" : ""} queued for processing. Check your dashboard in a few minutes.`
-      : "No new transcripts found for that period.";
-    scanStatusEl.style.color = "#166534";
-
-    applyScanCooldown();
+    const result = await api.scanHistoryPreview(fromDate, toDate);
+    scanResults = result.meetings ?? [];
+    scanStatusEl.hidden = true;
+    scanResultsEl.hidden = false;
+    renderScanResults();
   } catch (err) {
-    const status = err.status ?? 0;
-    if (err.message?.includes("Try again in")) {
-      // 429 — extract minutes from error message
-      scanStatusEl.textContent = `Scan already in progress. ${err.message}`;
-      scanStatusEl.style.color = "#92400e";
-      localStorage.setItem(SCAN_COOLDOWN_KEY, String(Date.now()));
-      applyScanCooldown();
-    } else {
-      scanStatusEl.textContent = "Scan failed. Please try again.";
-      scanStatusEl.style.color = "#991b1b";
-      scanHistoryBtn.disabled = false;
-      scanHistoryBtn.textContent = "Scan Drive for Past Transcripts";
-    }
+    scanStatusEl.innerHTML = "";
+    scanStatusEl.textContent = err.message || "Could not scan meetings. Please try again.";
+    scanStatusEl.style.color = "#991b1b";
+  } finally {
+    scanHistoryBtn.disabled = false;
+    scanHistoryBtn.textContent = "Scan Drive for Past Transcripts";
+    scanFromEl.disabled = false;
+    scanToEl.disabled = false;
   }
+});
+
+async function processSelection(meetings) {
+  processSelectedBtn.disabled = true;
+  processAllBtn.disabled = true;
+  setRowCheckboxesDisabled(true);
+  processStatusEl.hidden = false;
+  processStatusEl.style.color = "";
+  processStatusEl.innerHTML = '<span class="loading-spinner"></span> Queuing meetings…';
+
+  try {
+    const result = await api.processHistorySelection(meetings);
+    const created = result.created ?? 0;
+    processStatusEl.textContent = created > 0
+      ? `${created} meeting${created !== 1 ? "s" : ""} queued for processing. Check your dashboard in a few minutes.`
+      : "No new meetings were queued (all already processed).";
+    processStatusEl.style.color = created > 0 ? "#166534" : "#6b7280";
+
+    // Mark processed meetings as already-processed in local state
+    if (created > 0) {
+      for (const m of meetings) {
+        const existing = scanResults.find(r => r.id === m.id);
+        if (existing) existing.alreadyProcessed = true;
+        selectedIds.delete(m.id);
+      }
+      renderScanResults();
+    }
+  } catch (err) {
+    processStatusEl.textContent = err.message || "Could not queue selected meetings. Please try again.";
+    processStatusEl.style.color = "#991b1b";
+  } finally {
+    setRowCheckboxesDisabled(false);
+    updateSelectionState();
+  }
+}
+
+processSelectedBtn.addEventListener("click", () => {
+  const meetings = scanResults
+    .filter(m => !m.alreadyProcessed && selectedIds.has(m.id))
+    .map(({ id, title, date, source, driveFileLink }) => ({ id, title, date, source, driveFileLink }));
+  if (meetings.length === 0) return;
+  processSelection(meetings);
+});
+
+processAllBtn.addEventListener("click", () => {
+  const meetings = scanResults
+    .filter(m => !m.alreadyProcessed)
+    .map(({ id, title, date, source, driveFileLink }) => ({ id, title, date, source, driveFileLink }));
+  if (meetings.length === 0) return;
+  if (!window.confirm(`Process all ${meetings.length} meeting${meetings.length !== 1 ? "s" : ""}? This will queue them for AI processing.`)) return;
+  processSelection(meetings);
 });

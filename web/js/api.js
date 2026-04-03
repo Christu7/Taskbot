@@ -241,6 +241,14 @@ export const api = {
   submitTranscript: (body) =>
     request("POST", "/meetings/submit-transcript", body),
 
+  /** Preview-only scan: returns candidates in a date range with alreadyProcessed flag. No writes. */
+  scanHistoryPreview: (fromDate, toDate) =>
+    request("POST", "/meetings/scan-history-preview", { fromDate, toDate }),
+
+  /** Queues selected meetings for processing by creating processedTranscripts docs. */
+  processHistorySelection: (meetings) =>
+    request("POST", "/meetings/process-history-selection", { meetings }),
+
   // ── Transcripts status (dashboard banner) ────────────────────────────────
   /** Returns { count } of transcripts stuck in awaiting_configuration. */
   getAwaitingCount: () => request("GET", "/transcripts/awaiting"),

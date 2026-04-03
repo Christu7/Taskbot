@@ -228,14 +228,16 @@
 
           <div class="setting-row">
             <div>
-              <div class="setting-label">How far back?</div>
+              <div class="setting-label">Date range</div>
             </div>
-            <select id="scan-days-back">
-              <option value="7">Last 7 days</option>
-              <option value="30">Last 30 days</option>
-              <option value="90">Last 90 days</option>
-            </select>
+            <div style="display:flex;gap:8px;align-items:center;">
+              <input type="date" id="scan-from-date" style="font-size:13px;padding:5px 8px;border:1px solid #d1d5db;border-radius:6px;" />
+              <span style="font-size:13px;color:#6b7280;">to</span>
+              <input type="date" id="scan-to-date" style="font-size:13px;padding:5px 8px;border:1px solid #d1d5db;border-radius:6px;" />
+            </div>
           </div>
+
+          <div id="scan-date-error" hidden style="padding:4px 0 0 0;font-size:12px;color:#991b1b;text-align:right;"></div>
 
           <div class="setting-row" style="border-top:none;padding-top:0;">
             <div></div>
@@ -243,6 +245,27 @@
           </div>
 
           <div id="scan-status" hidden style="padding:8px 0 4px 0;font-size:13px;"></div>
+
+          <!-- Results (shown after scan) -->
+          <div id="scan-results" hidden>
+            <div style="margin:12px 0 8px 0;display:flex;align-items:center;gap:12px;">
+              <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;">
+                <input type="checkbox" id="scan-select-all" /> Select all new
+              </label>
+              <span id="scan-results-count" style="font-size:12px;color:#6b7280;"></span>
+            </div>
+
+            <div id="scan-results-list" style="border:1px solid #e5e7eb;border-radius:6px;overflow:hidden;margin-bottom:12px;font-size:13px;"></div>
+
+            <div id="batch-warning" hidden style="font-size:12px;color:#92400e;text-align:right;padding:0 0 6px 0;"></div>
+
+            <div style="display:flex;gap:8px;justify-content:flex-end;">
+              <button id="process-selected-btn" class="btn btn-ghost" disabled>Process selected</button>
+              <button id="process-all-btn" class="btn btn-primary" disabled>Process all</button>
+            </div>
+
+            <div id="process-status" hidden style="padding:8px 0 4px 0;font-size:13px;text-align:right;"></div>
+          </div>
         </div>
 
       </div>

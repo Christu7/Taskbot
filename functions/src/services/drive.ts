@@ -114,14 +114,17 @@ function extractTextFromStructuralElements(
  */
 async function findPatternAFiles(
   drive: ReturnType<typeof buildDriveClient>,
-  isoSince: string
+  isoSince: string,
+  isoUntil?: string
 ): Promise<TranscriptFile[]> {
-  const query = [
+  const conditions = [
     "mimeType='application/vnd.google-apps.document'",
     "name contains 'transcript'",
     `modifiedTime > '${isoSince}'`,
     "trashed = false",
-  ].join(" and ");
+  ];
+  if (isoUntil) conditions.push(`modifiedTime < '${isoUntil}'`);
+  const query = conditions.join(" and ");
 
   const response = await drive.files.list({
     q: query,
@@ -155,7 +158,8 @@ async function findPatternAFiles(
  */
 async function findPatternBFiles(
   drive: ReturnType<typeof buildDriveClient>,
-  isoSince: string
+  isoSince: string,
+  isoUntil?: string
 ): Promise<TranscriptFile[]> {
   // Step 1: Find the "My Meeting Notes" folder
   let folderId: string;
@@ -193,12 +197,14 @@ async function findPatternBFiles(
 
   // Step 2: Find recent Google Docs in that folder
   try {
-    const query = [
+    const conditions = [
       "mimeType='application/vnd.google-apps.document'",
       `'${folderId}' in parents`,
       `modifiedTime > '${isoSince}'`,
       "trashed = false",
-    ].join(" and ");
+    ];
+    if (isoUntil) conditions.push(`modifiedTime < '${isoUntil}'`);
+    const query = conditions.join(" and ");
 
     const response = await drive.files.list({
       q: query,
@@ -259,6 +265,61 @@ export async function findNewTranscripts(
     ]);
 
     // Merge and deduplicate by file ID (a file can't match both patterns, but be safe)
+    const seen = new Set<string>();
+    const combined: TranscriptFile[] = [];
+    for (const file of [...patternA, ...patternB]) {
+      if (!seen.has(file.fileId)) {
+        seen.add(file.fileId);
+        combined.push(file);
+      }
+    }
+
+    return combined;
+  } catch (err) {
+    const status = getErrorStatus(err);
+    const message = (err as Error).message ?? "";
+
+    if (status === 401 || message.includes("401") || message.toLowerCase().includes("unauthorized")) {
+      throw new TokenExpiredError("unknown", `Drive API auth error: ${message}`);
+    }
+    if (status === 429 || message.includes("429") || message.toLowerCase().includes("quota")) {
+      throw new APIQuotaError("Google Drive", message);
+    }
+    throw err;
+  }
+}
+
+/**
+ * Searches a user's Google Drive for Google Meet documents within a date range.
+ * Covers both Pattern A (classic transcripts) and Pattern B (Gemini Notes).
+ *
+ * This is the read-only counterpart to findNewTranscripts: it accepts an explicit
+ * upper bound so callers can preview a specific window without side effects.
+ *
+ * @param accessToken - Valid OAuth access token for the user
+ * @param fromDate    - Lower bound (inclusive start of day, UTC)
+ * @param toDate      - Upper bound (inclusive end of day, UTC)
+ * @returns Array of matching file metadata, deduplicated by Drive file ID
+ * @throws TokenExpiredError if the access token is revoked/expired
+ * @throws APIQuotaError if the Drive quota is exceeded
+ */
+export async function findTranscriptsInRange(
+  accessToken: string,
+  fromDate: Date,
+  toDate: Date
+): Promise<TranscriptFile[]> {
+  const drive = buildDriveClient(accessToken);
+  // Drive's modifiedTime filter is exclusive on both ends, so nudge the bounds
+  // by one millisecond to make the range fully inclusive for the caller.
+  const isoSince = new Date(fromDate.getTime() - 1).toISOString();
+  const isoUntil = new Date(toDate.getTime() + 1).toISOString();
+
+  try {
+    const [patternA, patternB] = await Promise.all([
+      findPatternAFiles(drive, isoSince, isoUntil),
+      findPatternBFiles(drive, isoSince, isoUntil),
+    ]);
+
     const seen = new Set<string>();
     const combined: TranscriptFile[] = [];
     for (const file of [...patternA, ...patternB]) {
