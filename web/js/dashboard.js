@@ -12,6 +12,10 @@ const awaitingBanner = document.getElementById("awaiting-banner");
 const logoutBtn  = document.getElementById("logout-btn");
 const refreshBtn = document.getElementById("refresh-btn");
 
+// Upload transcript (.docx) elements
+const uploadTranscriptBtn = document.getElementById("upload-transcript-btn");
+const transcriptFileInput = document.getElementById("transcript-file-input");
+
 // Submit transcript modal elements
 const submitTranscriptBtn = document.getElementById("submit-transcript-btn");
 const submitModal         = document.getElementById("submit-modal");
@@ -174,6 +178,38 @@ function openModal() {
 function closeModal() {
   submitModal.hidden = true;
 }
+
+// ─── Upload Transcript (.docx) ────────────────────────────────────────────────
+
+uploadTranscriptBtn.addEventListener("click", () => {
+  transcriptFileInput.value = ""; // reset so the same file can be re-selected
+  transcriptFileInput.click();
+});
+
+transcriptFileInput.addEventListener("change", async () => {
+  const file = transcriptFileInput.files[0];
+  if (!file) return;
+
+  if (!file.name.toLowerCase().endsWith(".docx")) {
+    showToast("Only .docx files are supported. Please select a .docx file.", "error");
+    return;
+  }
+
+  const meetingTitle = file.name.replace(/\.docx$/i, "");
+
+  uploadTranscriptBtn.disabled = true;
+  uploadTranscriptBtn.textContent = "Uploading…";
+
+  try {
+    await api.uploadTranscript(file, meetingTitle, "");
+    showToast("Transcript uploaded and queued for processing.", "success");
+  } catch (err) {
+    showToast(err.message || "Could not upload transcript. Please try again.", "error");
+  } finally {
+    uploadTranscriptBtn.disabled = false;
+    uploadTranscriptBtn.textContent = "Upload Transcript File";
+  }
+});
 
 submitTranscriptBtn.addEventListener("click", openModal);
 modalCancelBtn.addEventListener("click", closeModal);

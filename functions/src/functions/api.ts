@@ -32,6 +32,12 @@ import { findNewTranscripts, findTranscriptsInRange } from "../services/drive";
 import { completeExternalRefs, updateExternalRefs } from "../services/taskDestinations/taskRouter";
 import { syncUserNow } from "./syncEngine";
 import { getSecret, isIntegrationConfigured } from "../services/secrets";
+import multer from "multer";
+// mammoth has no @types package; declare the minimal surface we use.
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const mammoth = require("mammoth") as {
+  extractRawText: (input: { buffer: Buffer }) => Promise<{ value: string }>;
+};
 
 const db = () => admin.firestore();
 
@@ -48,6 +54,23 @@ app.use((req: Request, _res: Response, next: NextFunction) => {
   }
   next();
 });
+
+// ─── Multer (multipart/form-data for .docx uploads) ──────────────────────────
+
+const _docxUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
+});
+
+/** Promisified so multer errors are catchable in async route handlers. */
+function runDocxUpload(req: Request, res: Response): Promise<void> {
+  return new Promise((resolve, reject) => {
+    _docxUpload.single("file")(req, res, (err: unknown) => {
+      if (err) reject(err);
+      else resolve();
+    });
+  });
+}
 
 // ─── Auth Middleware ──────────────────────────────────────────────────────────
 // `authenticate`, `requireAdmin`, and `AuthRequest` are imported from
@@ -1643,6 +1666,88 @@ app.post("/meetings/submit-transcript", authenticate, async (req: Request, res: 
 
   logger.info(`submit-transcript: user ${uid} submitted "${titleTrimmed}" (${docId})`);
   res.json({ meetingId: docId, message: "Transcript submitted for processing." });
+});
+
+// ─── POST /meetings/upload-transcript ─────────────────────────────────────────
+// Accepts a .docx file upload, extracts plain text via mammoth, and creates a
+// processedTranscripts document. The Firestore onCreate trigger fires
+// automatically — no manual pipeline invocation needed.
+
+app.post("/meetings/upload-transcript", authenticate, async (req: Request, res: Response) => {
+  const uid = (req as AuthRequest).uid;
+
+  // Parse the multipart body; catch multer-level errors (size limit, parse failure)
+  try {
+    await runDocxUpload(req, res);
+  } catch (err) {
+    if (err instanceof multer.MulterError && err.code === "LIMIT_FILE_SIZE") {
+      res.status(400).json({ error: "File too large. Maximum size is 10 MB." });
+    } else {
+      res.status(400).json({ error: "Could not parse upload. Send a multipart/form-data request." });
+    }
+    return;
+  }
+
+  if (!req.file) {
+    res.status(400).json({ error: "No file uploaded. Attach a .docx file in the 'file' field." });
+    return;
+  }
+  if (!req.file.originalname.toLowerCase().endsWith(".docx")) {
+    res.status(400).json({ error: "Only .docx files are accepted." });
+    return;
+  }
+
+  const meetingTitle = ((req.body.meetingTitle as string | undefined) ?? "").trim();
+  const meetingDate  = ((req.body.meetingDate  as string | undefined) ?? "").trim();
+
+  if (meetingDate && (!/^\d{4}-\d{2}-\d{2}$/.test(meetingDate) || isNaN(new Date(meetingDate).getTime()))) {
+    res.status(400).json({ error: "meetingDate must be a valid date in YYYY-MM-DD format." });
+    return;
+  }
+
+  // Extract plain text from the .docx buffer
+  let extractedText: string;
+  try {
+    const result = await mammoth.extractRawText({ buffer: req.file.buffer });
+    extractedText = result.value.trim();
+  } catch (err) {
+    logger.error(`upload-transcript: mammoth failed for uid=${uid}`, { error: (err as Error).message });
+    res.status(422).json({ error: "Could not extract text from the uploaded file." });
+    return;
+  }
+
+  if (!extractedText) {
+    res.status(400).json({ error: "The uploaded file appears to be empty or contains no extractable text." });
+    return;
+  }
+
+  // Fall back to filename (without extension) when no title is provided
+  const title = meetingTitle || req.file.originalname.replace(/\.docx$/i, "") || "Uploaded Transcript";
+
+  const docId = `manual_${uid}_${Date.now()}`;
+  await db().collection("processedTranscripts").doc(docId).set({
+    driveFileId: docId,
+    driveFileLink: "",
+    sourceType: "manual_submission",
+    detectedByUid: uid,
+    submittedByUid: uid,
+    meetingTitle: title,
+    ...(meetingDate ? { meetingDate } : {}),
+    detectedAt: FieldValue.serverTimestamp(),
+    status: "pending",
+    attendeeEmails: [],
+    cachedTranscriptText: extractedText,
+    isManual: true,
+  });
+
+  logger.info(
+    `upload-transcript: uid=${uid} uploaded "${title}" → ${docId} (${extractedText.length} chars)`
+  );
+  res.json({
+    success: true,
+    meetingId: docId,
+    message: "Transcript uploaded and queued for processing.",
+  });
 });
 
 // ─── Admin Routes ─────────────────────────────────────────────────────────────

@@ -241,6 +241,29 @@ export const api = {
   submitTranscript: (body) =>
     request("POST", "/meetings/submit-transcript", body),
 
+  /** Uploads a .docx file for AI processing. Uses FormData — no Content-Type header set manually. */
+  uploadTranscript: async (file, meetingTitle, meetingDate) => {
+    const user = auth.currentUser;
+    if (!user) throw new Error("Not signed in");
+    const token = await user.getIdToken();
+
+    const formData = new FormData();
+    formData.append("file", file);
+    if (meetingTitle) formData.append("meetingTitle", meetingTitle);
+    if (meetingDate) formData.append("meetingDate", meetingDate);
+
+    const res = await fetch("/api/meetings/upload-transcript", {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${token}` },
+      body: formData,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(err.error || `Upload failed (${res.status})`);
+    }
+    return res.json();
+  },
+
   /** Preview-only scan: returns candidates in a date range with alreadyProcessed flag. No writes. */
   scanHistoryPreview: (fromDate, toDate) =>
     request("POST", "/meetings/scan-history-preview", { fromDate, toDate }),
