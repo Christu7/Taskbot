@@ -40,7 +40,11 @@ const db = () => admin.firestore();
 // ─── Express App ──────────────────────────────────────────────────────────────
 
 const app = express();
-app.use(express.json());
+// Skip JSON body parsing for multipart requests so multer can read the raw stream.
+app.use((req: Request, res: Response, next: NextFunction) => {
+  if (req.is("multipart/*")) return next();
+  express.json()(req, res, next);
+});
 
 // Normalize path: strip /api prefix when request arrives via Firebase Hosting
 // rewrite (which preserves the full path, unlike direct function invocation).
@@ -58,13 +62,18 @@ const _docxUpload = multer({
   limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
 });
 
-/** Promisified so multer errors are catchable in async route handlers. */
-function runDocxUpload(req: Request, res: Response): Promise<void> {
-  return new Promise((resolve, reject) => {
-    _docxUpload.single("file")(req, res, (err: unknown) => {
-      if (err) reject(err);
-      else resolve();
-    });
+/** Express middleware that runs multer and handles upload errors inline. */
+function docxUploadMiddleware(req: Request, res: Response, next: NextFunction): void {
+  _docxUpload.single("file")(req, res, (err: unknown) => {
+    if (err instanceof multer.MulterError && err.code === "LIMIT_FILE_SIZE") {
+      res.status(400).json({ error: "File too large. Maximum size is 10 MB." });
+      return;
+    }
+    if (err) {
+      res.status(400).json({ error: "Could not parse upload. Send a multipart/form-data request." });
+      return;
+    }
+    next();
   });
 }
 
@@ -1669,20 +1678,8 @@ app.post("/meetings/submit-transcript", authenticate, async (req: Request, res: 
 // processedTranscripts document. The Firestore onCreate trigger fires
 // automatically — no manual pipeline invocation needed.
 
-app.post("/meetings/upload-transcript", authenticate, async (req: Request, res: Response) => {
+app.post("/meetings/upload-transcript", authenticate, docxUploadMiddleware, async (req: Request, res: Response) => {
   const uid = (req as AuthRequest).uid;
-
-  // Parse the multipart body; catch multer-level errors (size limit, parse failure)
-  try {
-    await runDocxUpload(req, res);
-  } catch (err) {
-    if (err instanceof multer.MulterError && err.code === "LIMIT_FILE_SIZE") {
-      res.status(400).json({ error: "File too large. Maximum size is 10 MB." });
-    } else {
-      res.status(400).json({ error: "Could not parse upload. Send a multipart/form-data request." });
-    }
-    return;
-  }
 
   if (!req.file) {
     res.status(400).json({ error: "No file uploaded. Attach a .docx file in the 'file' field." });
