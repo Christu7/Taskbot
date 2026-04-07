@@ -1,4 +1,4 @@
 declare module "busboy" {
-  const Busboy: any;
+  const Busboy: unknown;
   export default Busboy;
 }
