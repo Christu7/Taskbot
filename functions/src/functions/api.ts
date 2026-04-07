@@ -149,25 +149,33 @@ export const uploadTranscript = onRequest({ region: "us-central1", cors: ALLOWED
   const uid = await verifyBearerAuth(req, res);
   if (!uid) return;
 
-  docxUpload(req, res, async (err: unknown) => {
+  try {
+    await new Promise<void>((resolve, reject) => {
+      docxUpload(req, res, (err: unknown) => {
+        if (err) {
+          reject(err);
+          return;
+        }
+        resolve();
+      });
+    });
+  } catch (err) {
     if (err instanceof multer.MulterError && err.code === "LIMIT_FILE_SIZE") {
       res.status(400).json({ error: "File too large. Maximum size is 10 MB." });
       return;
     }
-    if (err) {
-      res.status(400).json({ error: "Could not parse upload. Send a multipart/form-data request." });
-      return;
-    }
+    res.status(400).json({ error: "Could not parse upload. Send a multipart/form-data request." });
+    return;
+  }
 
-    try {
-      await queueUploadedTranscript(req, res, uid);
-    } catch (handlerErr) {
-      logger.error("upload-transcript failed", { error: (handlerErr as Error).message, uid });
-      if (!res.headersSent) {
-        res.status(500).json({ error: "Failed to upload transcript." });
-      }
+  try {
+    await queueUploadedTranscript(req, res, uid);
+  } catch (handlerErr) {
+    logger.error("upload-transcript failed", { error: (handlerErr as Error).message, uid });
+    if (!res.headersSent) {
+      res.status(500).json({ error: "Failed to upload transcript." });
     }
-  });
+  }
 });
 
 app.use(express.json());
