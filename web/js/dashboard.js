@@ -1,6 +1,7 @@
 import { requireAuth, signOutUser, showToast, initAdminNav } from "./auth.js";
 import { api } from "./api.js";
-import { projectId } from "./firebase-config.js";
+import { projectId, db } from "./firebase-config.js";
+import { collectionGroup, query, where, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 const loadingEl  = document.getElementById("loading");
 const listEl     = document.getElementById("meetings-list");
@@ -69,7 +70,23 @@ try {
   // Non-fatal
 }
 
-await loadMeetings();
+// ─── Real-time meetings listener ───────────────────────────────────────────────
+// Watches the user's pending tasks in Firestore. Each snapshot fires loadMeetings()
+// so new meetings appear automatically when processing completes, and cards
+// disappear when all proposals are resolved — no manual refresh needed.
+const _pendingTasksQ = query(
+  collectionGroup(db, "tasks"),
+  where("assigneeUid", "==", user.uid),
+  where("status", "==", "pending")
+);
+
+const _unsubMeetings = onSnapshot(
+  _pendingTasksQ,
+  () => loadMeetings(),
+  (err) => console.error("Meetings listener error:", err)
+);
+
+window.addEventListener("beforeunload", () => _unsubMeetings());
 
 // ─── Load meetings ─────────────────────────────────────────────────────────────
 
