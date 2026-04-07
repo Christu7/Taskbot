@@ -32,7 +32,7 @@ import { findNewTranscripts, findTranscriptsInRange } from "../services/drive";
 import { completeExternalRefs, updateExternalRefs } from "../services/taskDestinations/taskRouter";
 import { syncUserNow } from "./syncEngine";
 import { getSecret, isIntegrationConfigured } from "../services/secrets";
-import multer from "multer";
+import Busboy from "busboy";
 import * as mammoth from "mammoth";
 
 const db = () => admin.firestore();
@@ -55,26 +55,31 @@ app.use((req: Request, _res: Response, next: NextFunction) => {
   next();
 });
 
-// ─── Multer (multipart/form-data for .docx uploads) ──────────────────────────
+type ParsedUpload = {
+  file?: {
+    buffer: Buffer;
+    originalname: string;
+  };
+  meetingTitle?: string;
+  meetingDate?: string;
+};
 
-const docxUpload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
-}).single("file");
-
-async function queueUploadedTranscript(req: Request, res: Response, uid: string): Promise<void> {
-
-  if (!req.file) {
+async function queueUploadedTranscript(
+  upload: ParsedUpload,
+  res: Response,
+  uid: string
+): Promise<void> {
+  if (!upload.file) {
     res.status(400).json({ error: "No file uploaded. Attach a .docx file in the 'file' field." });
     return;
   }
-  if (!req.file.originalname.toLowerCase().endsWith(".docx")) {
+  if (!upload.file.originalname.toLowerCase().endsWith(".docx")) {
     res.status(400).json({ error: "Only .docx files are accepted." });
     return;
   }
 
-  const meetingTitle = ((req.body.meetingTitle as string | undefined) ?? "").trim();
-  const meetingDate = ((req.body.meetingDate as string | undefined) ?? "").trim();
+  const meetingTitle = (upload.meetingTitle ?? "").trim();
+  const meetingDate = (upload.meetingDate ?? "").trim();
 
   if (meetingDate && (!/^\d{4}-\d{2}-\d{2}$/.test(meetingDate) || isNaN(new Date(meetingDate).getTime()))) {
     res.status(400).json({ error: "meetingDate must be a valid date in YYYY-MM-DD format." });
@@ -83,7 +88,7 @@ async function queueUploadedTranscript(req: Request, res: Response, uid: string)
 
   let extractedText: string;
   try {
-    const result = await mammoth.extractRawText({ buffer: req.file.buffer });
+    const result = await mammoth.extractRawText({ buffer: upload.file.buffer });
     extractedText = result.value.trim();
   } catch (err) {
     logger.error(`upload-transcript: mammoth failed for uid=${uid}`, { error: (err as Error).message });
@@ -96,7 +101,7 @@ async function queueUploadedTranscript(req: Request, res: Response, uid: string)
     return;
   }
 
-  const title = meetingTitle || req.file.originalname.replace(/\.docx$/i, "") || "Uploaded Transcript";
+  const title = meetingTitle || upload.file.originalname.replace(/\.docx$/i, "") || "Uploaded Transcript";
 
   const docId = `manual_${uid}_${Date.now()}`;
   await db().collection("processedTranscripts").doc(docId).set({
@@ -149,27 +154,92 @@ export const uploadTranscript = onRequest({ region: "us-central1", cors: ALLOWED
   const uid = await verifyBearerAuth(req, res);
   if (!uid) return;
 
-  try {
-    await new Promise<void>((resolve, reject) => {
-      docxUpload(req, res, (err: unknown) => {
-        if (err) {
-          reject(err);
-          return;
-        }
-        resolve();
-      });
-    });
-  } catch (err) {
-    if (err instanceof multer.MulterError && err.code === "LIMIT_FILE_SIZE") {
-      res.status(400).json({ error: "File too large. Maximum size is 10 MB." });
-      return;
-    }
+  const contentType = req.headers["content-type"] ?? "";
+  if (!contentType.toLowerCase().startsWith("multipart/form-data")) {
     res.status(400).json({ error: "Could not parse upload. Send a multipart/form-data request." });
     return;
   }
 
+  const upload = await new Promise<ParsedUpload>((resolve, reject) => {
+    let settled = false;
+    let fileTooLarge = false;
+    const parsed: ParsedUpload = {};
+    const fileChunks: Buffer[] = [];
+
+    const finish = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      fn();
+    };
+
+    const busboy = Busboy({
+      headers: req.headers,
+      limits: { files: 1, fileSize: 10 * 1024 * 1024 },
+    });
+
+    busboy.on("file", (fieldname: string, file: NodeJS.ReadableStream, info: { filename: string }) => {
+      const filename = typeof info === "object" && info !== null ? info.filename : "";
+
+      if (fieldname !== "file") {
+        file.resume();
+        return;
+      }
+
+      parsed.file = { buffer: Buffer.alloc(0), originalname: filename };
+
+      file.on("data", (chunk: Buffer) => {
+        fileChunks.push(chunk);
+      });
+
+      file.on("limit", () => {
+        fileTooLarge = true;
+      });
+
+      file.on("end", () => {
+        parsed.file = {
+          buffer: Buffer.concat(fileChunks),
+          originalname: filename,
+        };
+      });
+    });
+
+    busboy.on("field", (fieldname: string, value: string) => {
+      if (fieldname === "meetingTitle") parsed.meetingTitle = value;
+      if (fieldname === "meetingDate") parsed.meetingDate = value;
+    });
+
+    busboy.on("filesLimit", () => {
+      if (!parsed.file) {
+        fileTooLarge = true;
+      }
+    });
+
+    busboy.on("error", (err: Error) => {
+      finish(() => reject(err));
+    });
+
+    busboy.on("finish", () => {
+      if (fileTooLarge) {
+        finish(() => reject(new Error("LIMIT_FILE_SIZE")));
+        return;
+      }
+      finish(() => resolve(parsed));
+    });
+
+    busboy.end(req.rawBody);
+  }).catch((err: unknown) => {
+    if (err instanceof Error && err.message === "LIMIT_FILE_SIZE") {
+      res.status(400).json({ error: "File too large. Maximum size is 10 MB." });
+      return null;
+    }
+    res.status(400).json({ error: "Could not parse upload. Send a multipart/form-data request." });
+    return null;
+  });
+
+  if (!upload) return;
+
   try {
-    await queueUploadedTranscript(req, res, uid);
+    await queueUploadedTranscript(upload, res, uid);
   } catch (handlerErr) {
     logger.error("upload-transcript failed", { error: (handlerErr as Error).message, uid });
     if (!res.headersSent) {
