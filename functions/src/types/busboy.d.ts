@@ -1,4 +1,5 @@
 declare module "busboy" {
-  const Busboy: unknown;
+  type BusboyFactory = (config: unknown) => unknown;
+  const Busboy: BusboyFactory;
   export default Busboy;
 }
