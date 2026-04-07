@@ -25,6 +25,7 @@
       "**/node_modules/**"
     ],
     "rewrites": [
+      { "source": "/uploadTranscript", "function": "uploadTranscript" },
       { "source": "/api/**",     "function": "api" },
       { "source": "/admin",      "destination": "/admin.html" },
       { "source": "/dashboard",  "destination": "/dashboard.html" },

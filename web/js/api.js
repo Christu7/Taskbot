@@ -252,7 +252,7 @@ export const api = {
     if (meetingTitle) formData.append("meetingTitle", meetingTitle);
     if (meetingDate) formData.append("meetingDate", meetingDate);
 
-    const res = await fetch("/api/meetings/upload-transcript", {
+    const res = await fetch("/uploadTranscript", {
       method: "POST",
       headers: { "Authorization": `Bearer ${token}` },
       body: formData,

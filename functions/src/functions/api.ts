@@ -36,6 +36,11 @@ import multer from "multer";
 import * as mammoth from "mammoth";
 
 const db = () => admin.firestore();
+const ALLOWED_ORIGINS = [
+  process.env.APP_URL ?? "https://taskbot-fb10d.web.app",
+  "http://localhost:3000",
+  "http://127.0.0.1:3000",
+];
 
 // ─── Express App ──────────────────────────────────────────────────────────────
 
@@ -57,8 +62,7 @@ const docxUpload = multer({
   limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
 }).single("file");
 
-async function uploadTranscriptHandler(req: Request, res: Response): Promise<void> {
-  const uid = (req as AuthRequest).uid;
+async function queueUploadedTranscript(req: Request, res: Response, uid: string): Promise<void> {
 
   if (!req.file) {
     res.status(400).json({ error: "No file uploaded. Attach a .docx file in the 'file' field." });
@@ -120,22 +124,50 @@ async function uploadTranscriptHandler(req: Request, res: Response): Promise<voi
   });
 }
 
-app.post("/meetings/upload-transcript", authenticate, docxUpload, uploadTranscriptHandler);
+async function verifyBearerAuth(req: Request, res: Response): Promise<string | null> {
+  const authHeader = req.headers.authorization ?? "";
+  if (!authHeader.startsWith("Bearer ")) {
+    res.status(401).json({ error: "Unauthorized" });
+    return null;
+  }
+  try {
+    const token = authHeader.slice(7);
+    const decoded = await admin.auth().verifyIdToken(token);
+    return decoded.uid;
+  } catch {
+    res.status(401).json({ error: "Invalid or expired token" });
+    return null;
+  }
+}
 
-app.use((err: unknown, req: Request, res: Response, next: NextFunction) => {
-  if (req.path !== "/meetings/upload-transcript") {
-    next(err);
+export const uploadTranscript = onRequest({ region: "us-central1", cors: ALLOWED_ORIGINS }, async (req, res) => {
+  if (req.method !== "POST") {
+    res.status(405).json({ error: "Method not allowed. Use POST." });
     return;
   }
-  if (err instanceof multer.MulterError && err.code === "LIMIT_FILE_SIZE") {
-    res.status(400).json({ error: "File too large. Maximum size is 10 MB." });
-    return;
-  }
-  if (err) {
-    res.status(400).json({ error: "Could not parse upload. Send a multipart/form-data request." });
-    return;
-  }
-  next();
+
+  const uid = await verifyBearerAuth(req, res);
+  if (!uid) return;
+
+  docxUpload(req, res, async (err: unknown) => {
+    if (err instanceof multer.MulterError && err.code === "LIMIT_FILE_SIZE") {
+      res.status(400).json({ error: "File too large. Maximum size is 10 MB." });
+      return;
+    }
+    if (err) {
+      res.status(400).json({ error: "Could not parse upload. Send a multipart/form-data request." });
+      return;
+    }
+
+    try {
+      await queueUploadedTranscript(req, res, uid);
+    } catch (handlerErr) {
+      logger.error("upload-transcript failed", { error: (handlerErr as Error).message, uid });
+      if (!res.headersSent) {
+        res.status(500).json({ error: "Failed to upload transcript." });
+      }
+    }
+  });
 });
 
 app.use(express.json());
@@ -1744,13 +1776,5 @@ app.use("/admin", authenticate, requireProjectManager, adminRateLimit, adminPmRo
 app.use("/admin", authenticate, requireAdmin, adminRateLimit, adminRouter);
 
 // ─── Export ───────────────────────────────────────────────────────────────────
-
-// Restrict CORS to the hosting domain. During local dev, also allow localhost.
-// Direct calls to the function URL from other origins are rejected.
-const ALLOWED_ORIGINS = [
-  process.env.APP_URL ?? "https://taskbot-fb10d.web.app",
-  "http://localhost:3000",
-  "http://127.0.0.1:3000",
-];
 
 export const api = onRequest({ region: "us-central1", cors: ALLOWED_ORIGINS }, app);

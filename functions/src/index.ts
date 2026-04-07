@@ -16,6 +16,7 @@ export { notifyUsers } from "./functions/notifyUsers";
 export { taskCreator } from "./functions/taskCreator";
 export { expireProposals } from "./functions/expireProposals";
 export { api } from "./functions/api";
+export { uploadTranscript } from "./functions/api";
 export { healthCheck } from "./functions/healthCheck";
 export { slackInteraction } from "./functions/slackInteraction";
 export { syncEngine } from "./functions/syncEngine";
