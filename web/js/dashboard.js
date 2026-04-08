@@ -80,13 +80,46 @@ const _pendingTasksQ = query(
   where("status", "==", "pending")
 );
 
+// Fallback: if onSnapshot doesn't fire within 10 s, clear the spinner.
+let _listenerFired = false;
+const _fallbackTimer = setTimeout(() => {
+  if (!_listenerFired) {
+    console.warn("onSnapshot did not fire within 10 s — clearing spinner");
+    showEmptyState();
+  }
+}, 10_000);
+
 const _unsubMeetings = onSnapshot(
   _pendingTasksQ,
-  () => loadMeetings(),
-  (err) => console.error("Meetings listener error:", err)
+  (snapshot) => {
+    _listenerFired = true;
+    clearTimeout(_fallbackTimer);
+    if (snapshot.empty) { showEmptyState(); return; }
+    loadMeetings();
+  },
+  (error) => {
+    _listenerFired = true;
+    clearTimeout(_fallbackTimer);
+    console.error("Listener error:", error);
+    showErrorState();
+  }
 );
 
 window.addEventListener("beforeunload", () => _unsubMeetings());
+
+// ─── UI state helpers ──────────────────────────────────────────────────────────
+
+function showEmptyState() {
+  loadingEl.hidden = true;
+  listEl.hidden = true;
+  emptyEl.hidden = false;
+}
+
+function showErrorState() {
+  loadingEl.hidden = true;
+  listEl.hidden = true;
+  emptyEl.hidden = false;
+}
 
 // ─── Load meetings ─────────────────────────────────────────────────────────────
 
@@ -102,7 +135,7 @@ async function loadMeetings() {
     loadingEl.hidden = true;
 
     if (!meetings || meetings.length === 0) {
-      emptyEl.hidden = false;
+      showEmptyState();
       return;
     }
 
