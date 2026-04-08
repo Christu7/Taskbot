@@ -26,13 +26,14 @@ export async function isFirstUser(): Promise<boolean> {
  */
 export async function createUser(
   uid: string,
-  data: Pick<UserDocument, "email" | "displayName">,
+  data: Pick<UserDocument, "email" | "displayName" | "orgId">,
   role: "admin" | "user" = "user"
 ): Promise<UserDocument> {
   const now = FieldValue.serverTimestamp() as unknown as admin.firestore.Timestamp;
 
   const user: UserDocument = {
     uid,
+    orgId: data.orgId,
     email: data.email,
     displayName: data.displayName,
     isActive: true,

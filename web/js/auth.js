@@ -10,9 +10,36 @@ import { auth, signInWithCustomToken } from "./firebase-config.js";
 
 export { auth, signInWithCustomToken };
 
-/** Trigger Google sign-in via popup. */
-export function signInWithGoogle() {
-  return signInWithPopup(auth, new GoogleAuthProvider());
+/**
+ * Trigger Google sign-in via popup.
+ *
+ * After the popup resolves, waits briefly to detect whether the backend
+ * rejected this account (unprovisioned domain). onUserCreated deletes the
+ * Auth user in that case, which surfaces here as an immediate sign-out.
+ */
+export async function signInWithGoogle() {
+  const result = await signInWithPopup(auth, new GoogleAuthProvider());
+
+  // Watch for the backend rejecting this account within 5 s.
+  // If the user goes null before the timer expires, the domain wasn't provisioned.
+  await new Promise((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (!settled) { settled = true; unsub(); resolve(undefined); }
+    }, 5_000);
+    const unsub = onAuthStateChanged(auth, (user) => {
+      if (!user && !settled) {
+        settled = true;
+        clearTimeout(timer);
+        unsub();
+        reject(new Error(
+          "Your organization hasn't been set up yet. Contact your administrator."
+        ));
+      }
+    });
+  });
+
+  return result;
 }
 
 /** No-op kept for backwards compatibility — popup flow needs no redirect handling. */

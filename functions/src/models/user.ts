@@ -67,6 +67,8 @@ export interface UserPreferences {
 export interface UserDocument {
   /** Firebase Auth UID — mirrors the document ID. */
   uid: string;
+  /** The organization this user belongs to (derived from their email domain). */
+  orgId: string;
   /** User's email address from Firebase Auth. */
   email: string;
   /** User's display name from Firebase Auth. */

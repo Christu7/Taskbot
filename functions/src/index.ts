@@ -76,22 +76,52 @@ export const onTaskCreated = onDocumentCreated(
 
 // ─── Auth Trigger: New User Created ───────────────────────────────────────────
 // Fires automatically when a new user authenticates via Firebase Auth for the
-// first time. Creates their Firestore user document with default settings.
+// first time. Validates that the user's email domain belongs to an active org,
+// then creates their Firestore user document with default settings. Users from
+// unprovisioned domains have their Auth account deleted and are rejected early.
 export const onUserCreated = functionsAuth.user().onCreate(async (user) => {
   const { uid, email, displayName } = user;
 
   logger.info(`New user signed up: ${uid} (${email ?? "no email"})`);
 
+  // ── 1. Domain check ────────────────────────────────────────────────────────
+  // Reject users whose email domain is not in any active org's allowedDomains.
+  // Runs with Admin SDK so it bypasses Firestore security rules — intentional.
+  const domain = email?.split("@")[1];
+
+  if (!domain) {
+    logger.warn(`Rejected sign-in from user with no email domain: ${uid}`);
+    await admin.auth().deleteUser(uid);
+    return;
+  }
+
+  const orgSnap = await admin.firestore()
+    .collection("organizations")
+    .where("allowedDomains", "array-contains", domain)
+    .where("isActive", "==", true)
+    .limit(1)
+    .get();
+
+  if (orgSnap.empty) {
+    logger.warn(`Rejected sign-in from unprovisioned domain: ${domain}`);
+    await admin.auth().deleteUser(uid);
+    return;
+  }
+
+  const orgId = orgSnap.docs[0].id;
+
+  // ── 2. Create user document ────────────────────────────────────────────────
   // The very first user to sign up is automatically promoted to admin.
   const first = await isFirstUser();
   const role = first ? "admin" : "user";
 
   await createUser(uid, {
+    orgId,
     email: email ?? "",
     displayName: displayName ?? email ?? uid,
   }, role);
 
-  logger.info(`Firestore user document created for ${uid} (role: ${role})`);
+  logger.info(`Firestore user document created for ${uid} (role: ${role}, org: ${orgId})`);
 
   await logActivity("user_joined",
     `New user joined: ${displayName ?? email ?? uid}`,
