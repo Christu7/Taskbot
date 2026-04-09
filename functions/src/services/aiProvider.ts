@@ -15,6 +15,14 @@ export interface AIExtractionResult {
   tokensUsed: { input: number; output: number };
 }
 
+/** A single key theme extracted from a meeting transcript by extractInsights(). */
+export interface InsightsTheme {
+  /** Short label, e.g. "Budget concerns" (3–6 words). */
+  title: string;
+  /** 2–3 sentence summary of what was discussed on this theme. */
+  summary: string;
+}
+
 /**
  * Abstraction over AI providers for task extraction.
  * Implement this interface to add a new provider (OpenAI, Gemini, etc.)
@@ -38,6 +46,15 @@ export interface AIProvider {
    * @returns Deduplicated task array and token usage counts
    */
   deduplicateTasks(tasks: ExtractedTask[]): Promise<AIExtractionResult>;
+
+  /**
+   * Extract 5–8 key themes from a meeting transcript.
+   * Returns a plain array; callers are responsible for persisting the result.
+   *
+   * @param transcript - Full plain-text transcript
+   * @returns Array of theme objects with title and summary
+   */
+  extractInsights(transcript: string): Promise<InsightsTheme[]>;
 }
 
 // ─── JSON parsing helpers ─────────────────────────────────────────────────────
@@ -210,6 +227,60 @@ export class AnthropicProvider implements AIProvider {
           output: response.usage.output_tokens,
         },
       };
+    }
+  }
+
+  async extractInsights(transcript: string): Promise<InsightsTheme[]> {
+    const client = await this.getClient();
+
+    const system =
+      "You are an assistant that extracts key themes from meeting transcripts. " +
+      "Return only valid JSON, no markdown, no preamble.";
+
+    const userMsg =
+      "Analyze this meeting transcript and extract 5-8 key themes discussed. " +
+      "For each theme provide a short title (3-6 words) and a 2-3 sentence summary of what was said.\n\n" +
+      "Return a JSON array with this exact structure:\n" +
+      "[{ \"title\": string, \"summary\": string }]\n\n" +
+      "Transcript:\n" + transcript;
+
+    // ── First attempt ──────────────────────────────────────────────────────
+    const firstResponse = await client.messages.create({
+      model: this.model,
+      max_tokens: 4096,
+      system,
+      messages: [{ role: "user", content: userMsg }],
+    });
+
+    const firstText = this.extractText(firstResponse);
+
+    try {
+      return parseRawResponse(firstText) as InsightsTheme[];
+    } catch (firstErr) {
+      logger.warn("aiProvider(anthropic): insights first response not valid JSON — retrying", {
+        error: (firstErr as Error).message,
+        snippet: firstText.slice(0, 200),
+      });
+    }
+
+    // ── Retry ──────────────────────────────────────────────────────────────
+    const retryResponse = await client.messages.create({
+      model: this.model,
+      max_tokens: 4096,
+      system,
+      messages: [
+        { role: "user", content: userMsg },
+        { role: "assistant", content: firstText },
+        { role: "user", content: "Your previous response was not valid JSON. Please return only the JSON array, with no other text before or after it." },
+      ],
+    });
+
+    const retryText = this.extractText(retryResponse);
+
+    try {
+      return parseRawResponse(retryText) as InsightsTheme[];
+    } catch (err) {
+      throw new AIExtractionError("anthropic", (err as Error).message);
     }
   }
 

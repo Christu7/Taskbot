@@ -1,4 +1,5 @@
 import { Timestamp } from "firebase-admin/firestore";
+import { InsightsTheme } from "../services/aiProvider";
 
 /**
  * Lifecycle states for a transcript as it moves through the TaskBot pipeline.
@@ -118,6 +119,15 @@ export interface ProcessedTranscriptDocument {
   hasNotes?: boolean;
   /** Token usage from the AI extraction call. */
   tokensUsed?: { input: number; output: number };
+  /**
+   * Key-theme insights extracted on demand via POST /api/meetings/:id/process-insights.
+   * null = not yet processed. Once populated, all org users with access see the same result.
+   */
+  insights?: {
+    themes: InsightsTheme[];
+    processedAt: Timestamp;
+    processedByUid: string;
+  } | null;
   /**
    * Validated tasks collected from all transcript chunks, stored while
    * waiting for the dedup call (status === "dedup_pending").

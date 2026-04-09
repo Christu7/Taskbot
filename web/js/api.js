@@ -236,6 +236,14 @@ export const api = {
   /** Returns up to 50 meetings where the user is an attendee or assignee. */
   getMyMeetings: () => request("GET", "/meetings/my-meetings"),
 
+  /**
+   * Extracts insights (key themes) from a meeting transcript using the AI
+   * provider. Idempotent — returns cached themes if already processed.
+   * Returns { insights: InsightsTheme[], cached: boolean }.
+   */
+  processInsights: (meetingId) =>
+    request("POST", `/meetings/${encodeURIComponent(meetingId)}/process-insights`),
+
   // ── Retroactive processing ────────────────────────────────────────────────
   /** Scans Drive for transcripts from the past N days (7, 30, or 90) and queues new ones. */
   scanHistory: (daysBack) =>

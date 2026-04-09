@@ -28,7 +28,9 @@ import {
 import { getWorkspaces, getProjects } from "../services/asana/asanaApi";
 import { lookupUserByEmail } from "../services/slack/slackClient";
 import { getValidAccessToken } from "../auth";
-import { findNewTranscripts, findTranscriptsInRange } from "../services/drive";
+import { findNewTranscripts, findTranscriptsInRange, getTranscriptContent } from "../services/drive";
+import { getAIProviderForUser } from "../services/aiProvider";
+import { ProcessedTranscriptDocument } from "../models/processedTranscript";
 import { completeExternalRefs, updateExternalRefs } from "../services/taskDestinations/taskRouter";
 import { syncUserNow } from "./syncEngine";
 import { getSecret, isIntegrationConfigured } from "../services/secrets";
@@ -1509,6 +1511,103 @@ app.get("/transcripts/awaiting", authenticate, async (req: Request, res: Respons
 
   res.json({ count: ids.size });
 });
+
+// ─── POST /meetings/:meetingId/process-insights ──────────────────────────────
+// Extracts 5-8 key themes from a meeting transcript using the configured AI
+// provider and stores them on the processedTranscripts document.
+//
+// Idempotent: if insights already exist the stored result is returned immediately
+// without calling the AI again (avoids duplicate token usage).
+
+app.post(
+  "/meetings/:meetingId/process-insights",
+  authenticate,
+  async (req: Request, res: Response) => {
+    const uid = (req as AuthRequest).uid;
+    const { meetingId } = req.params;
+
+    // 1. Load caller's user doc for orgId
+    const userDoc = await getUser(uid);
+    if (!userDoc) {
+      res.status(404).json({ error: "User not found" });
+      return;
+    }
+
+    // 2. Fetch the transcript document
+    const transcriptRef = db().collection("processedTranscripts").doc(meetingId);
+    const transcriptSnap = await transcriptRef.get();
+    if (!transcriptSnap.exists) {
+      res.status(404).json({ error: "Meeting not found" });
+      return;
+    }
+
+    const transcriptDoc = transcriptSnap.data() as ProcessedTranscriptDocument;
+
+    // 3. Org check — only users in the same org may trigger insight extraction
+    if ((transcriptDoc as unknown as Record<string, unknown>).orgId !== userDoc.orgId) {
+      res.status(403).json({ error: "Forbidden" });
+      return;
+    }
+
+    // 4. Return cached insights if they already exist — do not reprocess
+    if (transcriptDoc.insights) {
+      logger.info(`process-insights: returning cached insights for ${meetingId}`);
+      res.json({ insights: transcriptDoc.insights.themes, cached: true });
+      return;
+    }
+
+    // 5. Resolve transcript text — prefer cached text, fall back to Drive fetch
+    let transcriptText: string | undefined;
+
+    if (transcriptDoc.cachedTranscriptText) {
+      transcriptText = transcriptDoc.cachedTranscriptText;
+    } else if (transcriptDoc.driveFileId) {
+      try {
+        const accessToken = await getValidAccessToken(uid);
+        const content = await getTranscriptContent(accessToken, transcriptDoc.driveFileId);
+        transcriptText = content.transcript;
+      } catch (driveErr) {
+        logger.warn(`process-insights: Drive fetch failed for ${meetingId}`, {
+          error: (driveErr as Error).message,
+        });
+      }
+    }
+
+    if (!transcriptText?.trim()) {
+      res.status(400).json({ error: "Transcript content not available for insight extraction" });
+      return;
+    }
+
+    // 6. Call AI provider
+    let themes;
+    try {
+      const provider = await getAIProviderForUser(uid);
+      themes = await provider.extractInsights(transcriptText);
+    } catch (aiErr) {
+      logger.error(`process-insights: AI call failed for ${meetingId}`, {
+        error: (aiErr as Error).message,
+        uid,
+      });
+      res.status(500).json({ error: "Insight extraction failed, please try again" });
+      return;
+    }
+
+    // 7. Persist to Firestore
+    await transcriptRef.update({
+      insights: {
+        themes,
+        processedAt: FieldValue.serverTimestamp(),
+        processedByUid: uid,
+      },
+    });
+
+    logger.info(
+      `process-insights: stored ${themes.length} theme(s) for ${meetingId} (triggered by ${uid})`
+    );
+
+    res.json({ insights: themes, cached: false });
+  }
+);
 
 // ─── GET /meetings/my-meetings ───────────────────────────────────────────────
 // Returns up to 50 meetings where the authenticated user is an attendee or

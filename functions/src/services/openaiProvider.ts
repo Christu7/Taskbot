@@ -2,7 +2,7 @@ import OpenAI from "openai";
 import { logger } from "firebase-functions";
 import { ExtractedTask, MeetingContext } from "../models/aiExtraction";
 import { buildExtractionPrompt } from "../prompts/taskExtraction";
-import { AIProvider, AIExtractionResult } from "./aiProvider";
+import { AIProvider, AIExtractionResult, InsightsTheme } from "./aiProvider";
 import { AIExtractionError } from "../utils/errors";
 import { getSecret } from "./secrets";
 
@@ -129,6 +129,63 @@ export class OpenAIProvider implements AIProvider {
         { error: (err as Error).message }
       );
       return { tasks, tokensUsed };
+    }
+  }
+
+  async extractInsights(transcript: string): Promise<InsightsTheme[]> {
+    const client = await this.getClient();
+
+    const system =
+      "You are an assistant that extracts key themes from meeting transcripts. " +
+      "Return only valid JSON, no markdown, no preamble.";
+
+    const userMsg =
+      "Analyze this meeting transcript and extract 5-8 key themes discussed. " +
+      "For each theme provide a short title (3-6 words) and a 2-3 sentence summary of what was said.\n\n" +
+      "Return a JSON array with this exact structure:\n" +
+      "[{ \"title\": string, \"summary\": string }]\n\n" +
+      "Transcript:\n" + transcript;
+
+    const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
+      { role: "system", content: system },
+      { role: "user", content: userMsg },
+    ];
+
+    // ── First attempt ──────────────────────────────────────────────────────
+    const firstResponse = await client.chat.completions.create({
+      model: this.model,
+      max_tokens: 4096,
+      messages,
+    });
+
+    const firstText = firstResponse.choices[0]?.message?.content ?? "";
+
+    try {
+      return this.parseResponse(firstText) as unknown as InsightsTheme[];
+    } catch (firstErr) {
+      logger.warn("openaiProvider: insights first response not valid JSON — retrying", {
+        error: (firstErr as Error).message,
+        snippet: firstText.slice(0, 200),
+      });
+    }
+
+    // ── Retry ──────────────────────────────────────────────────────────────
+    const retryResponse = await client.chat.completions.create({
+      model: this.model,
+      max_tokens: 4096,
+      messages: [
+        ...messages,
+        { role: "assistant", content: firstText },
+        { role: "user", content: "Your previous response was not valid JSON. Please return only the JSON array, with no other text before or after it." },
+      ],
+    });
+
+    const retryText = retryResponse.choices[0]?.message?.content ?? "";
+
+    try {
+      return this.parseResponse(retryText) as unknown as InsightsTheme[];
+    } catch (err) {
+      throw new AIExtractionError("openai", (err as Error).message);
     }
   }
 
