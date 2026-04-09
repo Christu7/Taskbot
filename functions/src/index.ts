@@ -76,70 +76,57 @@ export const onTaskCreated = onDocumentCreated(
 
 // ─── Auth Trigger: New User Created ───────────────────────────────────────────
 // Fires automatically when a new user authenticates via Firebase Auth for the
-// first time. Validates that the user's email domain belongs to an active org,
-// then creates their Firestore user document with default settings. Users from
-// unprovisioned domains have their Auth account deleted and are rejected early.
+// first time. Delegates org validation to createUser — if the email domain is
+// not in any active org's allowedDomains, createUser throws before writing
+// anything to Firestore. This trigger catches that error, logs it, and deletes
+// the Auth account so the user cannot retry with the same credentials.
 export const onUserCreated = functionsAuth.user().onCreate(async (user) => {
   const { uid, email, displayName } = user;
 
   logger.info(`New user signed up: ${uid} (${email ?? "no email"})`);
 
-  // ── 1. Domain check ────────────────────────────────────────────────────────
-  // Reject users whose email domain is not in any active org's allowedDomains.
-  // Runs with Admin SDK so it bypasses Firestore security rules — intentional.
-  const domain = email?.split("@")[1];
-
-  if (!domain) {
-    logger.warn(`Rejected sign-in from user with no email domain: ${uid}`);
+  if (!email) {
+    logger.warn(`Rejected sign-in — no email address on account: ${uid}`);
     await admin.auth().deleteUser(uid);
     return;
   }
 
-  const orgSnap = await admin.firestore()
-    .collection("organizations")
-    .where("allowedDomains", "array-contains", domain)
-    .where("isActive", "==", true)
-    .limit(1)
-    .get();
-
-  if (orgSnap.empty) {
-    logger.warn(`Rejected sign-in from unprovisioned domain: ${domain}`);
-    await admin.auth().deleteUser(uid);
-    return;
-  }
-
-  const orgId = orgSnap.docs[0].id;
-
-  // ── 2. Create user document ────────────────────────────────────────────────
   // The very first user to sign up is automatically promoted to admin.
   const first = await isFirstUser();
   const role = first ? "admin" : "user";
 
-  await createUser(uid, {
-    orgId,
-    email: email ?? "",
-    displayName: displayName ?? email ?? uid,
-  }, role);
+  // createUser validates domain → orgId before writing. If validation fails it
+  // throws, no Firestore document is created, and we fall into the catch below.
+  let createdOrgId: string;
+  try {
+    const created = await createUser(uid, {
+      email,
+      displayName: displayName ?? email,
+    }, role);
+    createdOrgId = created.orgId;
+  } catch (err) {
+    logger.warn(`Rejected sign-in: ${(err as Error).message}`, { uid, email });
+    await admin.auth().deleteUser(uid);
+    return;
+  }
 
-  logger.info(`Firestore user document created for ${uid} (role: ${role}, org: ${orgId})`);
+  logger.info(`Firestore user document created for ${uid} (role: ${role}, org: ${createdOrgId})`);
 
   await logActivity("user_joined",
-    `New user joined: ${displayName ?? email ?? uid}`,
+    `New user joined: ${displayName ?? email}`,
     { userId: uid }
   );
 
   // Check if this email has a pending invite — mark it accepted
-  if (email) {
-    try {
-      const inviteRef = admin.firestore().collection("invites").doc(email);
-      const invite = await inviteRef.get();
-      if (invite.exists && !invite.data()?.accepted) {
-        await inviteRef.update({ accepted: true, acceptedAt: admin.firestore.FieldValue.serverTimestamp() });
-        logger.info(`Invite accepted for ${email}`);
-      }
-    } catch (err) {
-      logger.warn("onUserCreated: invite check failed", { error: (err as Error).message });
+  try {
+    const inviteRef = admin.firestore().collection("invites").doc(email);
+    const invite = await inviteRef.get();
+    if (invite.exists && !invite.data()?.accepted) {
+      await inviteRef.update({ accepted: true, acceptedAt: admin.firestore.FieldValue.serverTimestamp() });
+      logger.info(`Invite accepted for ${email}`);
     }
+  } catch (err) {
+    logger.warn("onUserCreated: invite check failed", { error: (err as Error).message });
   }
 });
 

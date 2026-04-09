@@ -23,13 +23,17 @@
     const btn = document.getElementById("login-btn");
     const err = document.getElementById("login-error");
 
-    // Redirect to dashboard whenever auth state resolves to a signed-in user
+    // Redirect already-signed-in users straight to the dashboard.
+    // The flag prevents this handler from racing the popup guard below:
+    // when a popup is in flight, onAuthStateChanged fires as soon as Firebase
+    // creates the Auth user — before the backend domain check has run. We must
+    // NOT redirect at that point or the 5-second guard in signInWithGoogle()
+    // will be running on a dead page and can never intercept the rejection.
+    let _popupActive = false;
     onAuthStateChanged(auth, (user) => {
-      if (user) window.location.href = "/dashboard";
+      if (user && !_popupActive) window.location.href = "/dashboard";
     });
 
-    // Check for a pending redirect result (returning from Google sign-in page).
-    // onAuthStateChanged above handles the redirect to dashboard on success.
     handleRedirectResult().catch((e) => {
       err.textContent = e.message || "Sign-in failed. Try again.";
       err.hidden = false;
@@ -39,9 +43,15 @@
       btn.disabled = true;
       btn.textContent = "Signing in…";
       err.hidden = true;
+      _popupActive = true;
       try {
+        // signInWithGoogle() waits up to 5 s for the backend to reject the
+        // account. If the domain isn't provisioned, onUserCreated deletes the
+        // Auth user and signInWithGoogle() throws before we ever redirect.
         await signInWithGoogle();
+        window.location.href = "/dashboard";
       } catch (e) {
+        _popupActive = false;
         btn.disabled = false;
         btn.textContent = "Sign in with Google";
         err.textContent = e.message || e.code || "Sign-in failed. Try again.";

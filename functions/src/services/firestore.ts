@@ -16,24 +16,62 @@ export async function isFirstUser(): Promise<boolean> {
 }
 
 /**
+ * Returns the first active organization whose allowedDomains contains any of
+ * the given domains, or null if none match.
+ *
+ * Used internally by createUser to validate the caller's email domain before
+ * any Firestore writes occur.
+ */
+export async function getOrgByAllowedDomain(
+  domain: string
+): Promise<{ id: string; data: admin.firestore.DocumentData } | null> {
+  const snap = await db()
+    .collection("organizations")
+    .where("allowedDomains", "array-contains", domain)
+    .where("isActive", "==", true)
+    .limit(1)
+    .get();
+  if (snap.empty) return null;
+  return { id: snap.docs[0].id, data: snap.docs[0].data() };
+}
+
+/**
  * Creates a new user document in Firestore with sensible defaults.
  * Should be called once, on first sign-in via the Auth onCreate trigger.
+ *
+ * Validates the user's email domain against active organizations **before**
+ * writing anything to Firestore. Throws if the domain is unrecognized so the
+ * caller can clean up the Auth account — no Firestore document is ever
+ * created for a rejected user.
  *
  * @param uid  - Firebase Auth UID (also used as the document ID)
  * @param data - Partial user data sourced from the Firebase Auth record
  * @param role - Role to assign; defaults to "user"
  * @returns The fully-populated UserDocument that was written to Firestore
+ * @throws If the email has no domain or the domain belongs to no active org
  */
 export async function createUser(
   uid: string,
-  data: Pick<UserDocument, "email" | "displayName" | "orgId">,
+  data: Pick<UserDocument, "email" | "displayName">,
   role: "admin" | "user" = "user"
 ): Promise<UserDocument> {
+  // ── 1. Validate domain before any write ───────────────────────────────────
+  const domain = data.email.split("@")[1];
+  if (!domain) {
+    throw new Error(`Cannot create user: invalid email address "${data.email}"`);
+  }
+
+  const org = await getOrgByAllowedDomain(domain);
+  if (!org) {
+    throw new Error(`Domain not provisioned: ${domain}`);
+  }
+
+  // ── 2. Write user document ────────────────────────────────────────────────
   const now = FieldValue.serverTimestamp() as unknown as admin.firestore.Timestamp;
 
   const user: UserDocument = {
     uid,
-    orgId: data.orgId,
+    orgId: org.id,
     email: data.email,
     displayName: data.displayName,
     isActive: true,
