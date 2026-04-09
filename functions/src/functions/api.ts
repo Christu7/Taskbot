@@ -1625,6 +1625,15 @@ app.get("/meetings/my-meetings", authenticate, async (req: Request, res: Respons
   }
 
   const { email, orgId } = userDoc;
+  if (!orgId || !email) {
+    res.status(400).json({
+      error: "User profile incomplete",
+      debug: { orgId, email },
+    });
+    return;
+  }
+
+  logger.info("my-meetings query", { orgId, email });
 
   // Primary: meetings in this org where the user is listed as an attendee.
   const attendeeSnap = await db()
