@@ -9,6 +9,15 @@
       ]
     },
     {
+      "collectionGroup": "processedTranscripts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "orgId", "order": "ASCENDING" },
+        { "fieldPath": "attendeeEmails", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "detectedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "tasks",
       "queryScope": "COLLECTION_GROUP",
       "fields": [

@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MeetBot — Meetings</title>
+  <link rel="stylesheet" href="styles.css" />
+  <style>
+    .meetings-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    .meetings-table th {
+      text-align: left;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #6b7280;
+      padding: 8px 12px;
+      border-bottom: 1px solid #e5e7eb;
+    }
+    .meetings-table td {
+      padding: 12px;
+      border-bottom: 1px solid #f3f4f6;
+      vertical-align: middle;
+      color: #111827;
+    }
+    .meetings-table tr:last-child td { border-bottom: none; }
+    .meetings-table tr:hover td { background: #f9fafb; }
+
+    .status-badge {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 600;
+      border-radius: 4px;
+      padding: 2px 8px;
+      white-space: nowrap;
+    }
+    .status-pending,
+    .status-processing    { background: #fef9c3; color: #a16207; }
+    .status-proposed      { background: #dbeafe; color: #1d4ed8; }
+    .status-completed     { background: #dcfce7; color: #15803d; }
+    .status-failed        { background: #fee2e2; color: #dc2626; }
+    .status-unknown       { background: #f3f4f6; color: #6b7280; }
+
+    .meeting-title {
+      font-weight: 500;
+      color: #111827;
+    }
+    .meeting-date {
+      color: #6b7280;
+    }
+    .actions-cell {
+      white-space: nowrap;
+    }
+    .actions-cell .btn + .btn {
+      margin-left: 6px;
+    }
+    .table-wrap {
+      background: #fff;
+      border: 1px solid #e5e7eb;
+      border-radius: 10px;
+      overflow: hidden;
+    }
+  </style>
+</head>
+<body>
+
+  <header class="site-header">
+    <div class="container">
+      <a href="/dashboard" class="brand">MeetBot</a>
+      <nav class="site-nav">
+        <a href="/dashboard">Dashboard</a>
+        <a href="/tasks">Tasks</a>
+        <a href="/meetings" class="active">Meetings</a>
+        <a href="/settings">Settings</a>
+        <a href="/admin" id="admin-link" hidden>Admin</a>
+      </nav>
+      <span class="user-chip" id="user-chip"></span>
+      <button id="logout-btn" class="btn btn-ghost" style="margin-left:8px;font-size:13px;padding:5px 10px;">Sign out</button>
+    </div>
+  </header>
+
+  <main>
+    <div class="container">
+
+      <div class="page-header">
+        <h1 class="page-title">Meetings</h1>
+      </div>
+
+      <!-- Loading -->
+      <div id="loading" class="empty-state">
+        <span class="loading-spinner"></span>Loading…
+      </div>
+
+      <!-- Error -->
+      <div id="error-state" class="empty-state" hidden></div>
+
+      <!-- Empty -->
+      <div id="empty-state" class="empty-state" hidden>
+        No meetings found. Meetings will appear here once transcripts are processed.
+      </div>
+
+      <!-- Table -->
+      <div id="table-wrap" class="table-wrap" hidden>
+        <table class="meetings-table">
+          <thead>
+            <tr>
+              <th>Meeting Name</th>
+              <th>Date</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="meetings-tbody"></tbody>
+        </table>
+      </div>
+
+    </div>
+  </main>
+
+  <script type="module" src="js/meetings.js"></script>
+</body>
+</html>

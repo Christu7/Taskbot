@@ -232,6 +232,10 @@ export const api = {
     return res; // Caller receives raw Response to handle the Blob download
   },
 
+  // ── Meetings (user-facing) ────────────────────────────────────────────────
+  /** Returns up to 50 meetings where the user is an attendee or assignee. */
+  getMyMeetings: () => request("GET", "/meetings/my-meetings"),
+
   // ── Retroactive processing ────────────────────────────────────────────────
   /** Scans Drive for transcripts from the past N days (7, 30, or 90) and queues new ones. */
   scanHistory: (daysBack) =>

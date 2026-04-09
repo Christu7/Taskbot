@@ -1510,6 +1510,81 @@ app.get("/transcripts/awaiting", authenticate, async (req: Request, res: Respons
   res.json({ count: ids.size });
 });
 
+// ─── GET /meetings/my-meetings ───────────────────────────────────────────────
+// Returns up to 50 meetings where the authenticated user is an attendee or
+// has at least one assigned proposal. Primary filter is attendeeEmails (fast
+// Firestore query); a secondary pass checks proposals for any meeting that
+// didn't match via email (e.g. manually submitted meetings with no attendee list).
+
+app.get("/meetings/my-meetings", authenticate, async (req: Request, res: Response) => {
+  const uid = (req as AuthRequest).uid;
+
+  const userDoc = await getUser(uid);
+  if (!userDoc) {
+    res.status(404).json({ error: "User not found" });
+    return;
+  }
+
+  const { email, orgId } = userDoc;
+
+  // Primary: meetings in this org where the user is listed as an attendee.
+  const attendeeSnap = await db()
+    .collection("processedTranscripts")
+    .where("orgId", "==", orgId)
+    .where("attendeeEmails", "array-contains", email)
+    .orderBy("detectedAt", "desc")
+    .limit(50)
+    .get();
+
+  const seenIds = new Set(attendeeSnap.docs.map((d) => d.id));
+
+  // Secondary: meetings where the user has been assigned a proposal task but
+  // their email wasn't in attendeeEmails (e.g. manually submitted transcripts).
+  const assigneeSnap = await db()
+    .collectionGroup("tasks")
+    .where("assigneeUid", "==", uid)
+    .get();
+
+  const extraIds = new Set<string>();
+  for (const taskDoc of assigneeSnap.docs) {
+    const meetingId = taskDoc.ref.parent.parent?.id;
+    if (meetingId && !seenIds.has(meetingId)) extraIds.add(meetingId);
+  }
+
+  // Fetch the extra meetings and verify they belong to this org.
+  const extraDocs: FirebaseFirestore.QueryDocumentSnapshot[] = [];
+  await Promise.all(
+    [...extraIds].map(async (meetingId) => {
+      const snap = await db().collection("processedTranscripts").doc(meetingId).get();
+      if (snap.exists && snap.data()?.orgId === orgId) {
+        extraDocs.push(snap as FirebaseFirestore.QueryDocumentSnapshot);
+      }
+    })
+  );
+
+  // Merge, sort by detectedAt desc, cap at 50.
+  const allDocs = [...attendeeSnap.docs, ...extraDocs].sort((a, b) => {
+    const aS = (a.data().detectedAt as Timestamp | undefined)?.seconds ?? 0;
+    const bS = (b.data().detectedAt as Timestamp | undefined)?.seconds ?? 0;
+    return bS - aS;
+  }).slice(0, 50);
+
+  const meetings = allDocs.map((doc) => {
+    const d = doc.data();
+    return {
+      id: doc.id,
+      meetingTitle: d.meetingTitle ?? doc.id,
+      originalTitle: d.originalTitle ?? d.meetingTitle ?? doc.id,
+      status: d.status ?? "unknown",
+      detectedAt: d.detectedAt ?? null,
+      insightsProcessed: !!d.insights,
+      insightsProcessedAt: d.insightsProcessedAt ?? null,
+    };
+  });
+
+  res.json({ meetings });
+});
+
 // ─── POST /meetings/scan-history-preview ─────────────────────────────────────
 // Read-only scan: returns candidate transcripts in a date range WITHOUT creating
 // any Firestore documents or triggering processing. Pure preview — no side effects.
