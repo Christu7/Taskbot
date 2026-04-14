@@ -1543,8 +1543,13 @@ app.post(
 
     const transcriptDoc = transcriptSnap.data() as ProcessedTranscriptDocument;
 
-    // 3. Org check — only users in the same org may trigger insight extraction
-    if ((transcriptDoc as unknown as Record<string, unknown>).orgId !== userDoc.orgId) {
+    // 3. Access check — user must be in the same org, or be the original submitter
+    // (older docs may not have orgId set)
+    const docOrgId = (transcriptDoc as unknown as Record<string, unknown>).orgId as string | undefined;
+    const docSubmittedBy = (transcriptDoc as unknown as Record<string, unknown>).submittedByUid as string | undefined;
+    const hasOrgAccess = docOrgId === userDoc.orgId;
+    const isSubmitter = docSubmittedBy === uid;
+    if (!hasOrgAccess && !isSubmitter) {
       res.status(403).json({ error: "Forbidden" });
       return;
     }
@@ -1635,47 +1640,41 @@ app.get("/meetings/my-meetings", authenticate, async (req: Request, res: Respons
 
   logger.info("my-meetings query", { orgId, email });
 
-  // Primary: meetings in this org where the user is listed as an attendee.
-  const attendeeSnap = await db()
-    .collection("processedTranscripts")
-    .where("orgId", "==", orgId)
-    .where("attendeeEmails", "array-contains", email)
-    .orderBy("detectedAt", "desc")
-    .limit(50)
-    .get();
+  // Two parallel queries — union in JS:
+  // 1. Meetings where user is listed as an attendee (Drive-detected or auto-populated)
+  // 2. Meetings the user personally submitted (manually uploaded .docx or pasted text)
+  const [attendeeSnap, submittedSnap] = await Promise.all([
+    db()
+      .collection("processedTranscripts")
+      .where("orgId", "==", orgId)
+      .where("attendeeEmails", "array-contains", email)
+      .limit(100)
+      .get(),
+    db()
+      .collection("processedTranscripts")
+      .where("submittedByUid", "==", uid)
+      .limit(100)
+      .get(),
+  ]);
 
-  const seenIds = new Set(attendeeSnap.docs.map((d) => d.id));
-
-  // Secondary: meetings where the user has been assigned a proposal task but
-  // their email wasn't in attendeeEmails (e.g. manually submitted transcripts).
-  const assigneeSnap = await db()
-    .collectionGroup("tasks")
-    .where("assigneeUid", "==", uid)
-    .get();
-
-  const extraIds = new Set<string>();
-  for (const taskDoc of assigneeSnap.docs) {
-    const meetingId = taskDoc.ref.parent.parent?.id;
-    if (meetingId && !seenIds.has(meetingId)) extraIds.add(meetingId);
+  // Merge, de-duplicate by doc ID, verify org for submittedSnap docs, sort desc.
+  const seen = new Set<string>();
+  const merged: FirebaseFirestore.QueryDocumentSnapshot[] = [];
+  for (const doc of attendeeSnap.docs) {
+    if (!seen.has(doc.id)) { seen.add(doc.id); merged.push(doc); }
+  }
+  for (const doc of submittedSnap.docs) {
+    const docOrgId = doc.data().orgId;
+    if (!seen.has(doc.id) && (!docOrgId || docOrgId === orgId)) {
+      seen.add(doc.id); merged.push(doc);
+    }
   }
 
-  // Fetch the extra meetings and verify they belong to this org.
-  const extraDocs: FirebaseFirestore.QueryDocumentSnapshot[] = [];
-  await Promise.all(
-    [...extraIds].map(async (meetingId) => {
-      const snap = await db().collection("processedTranscripts").doc(meetingId).get();
-      if (snap.exists && snap.data()?.orgId === orgId) {
-        extraDocs.push(snap as FirebaseFirestore.QueryDocumentSnapshot);
-      }
-    })
-  );
-
-  // Merge, sort by detectedAt desc, cap at 50.
-  const allDocs = [...attendeeSnap.docs, ...extraDocs].sort((a, b) => {
+  const allDocs = merged.sort((a, b) => {
     const aS = (a.data().detectedAt as Timestamp | undefined)?.seconds ?? 0;
     const bS = (b.data().detectedAt as Timestamp | undefined)?.seconds ?? 0;
     return bS - aS;
-  }).slice(0, 50);
+  });
 
   const meetings = allDocs.map((doc) => {
     const d = doc.data();

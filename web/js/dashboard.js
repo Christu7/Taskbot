@@ -60,48 +60,58 @@ try {
   // Non-fatal — just don't show banner
 }
 
-// Check if any meetings are stuck waiting for AI configuration
+// Check if any meetings are stuck waiting for AI configuration.
+// Only show the banner if AI is genuinely not configured — a positive count
+// alone is misleading because meetings may have been queued before the
+// provider was set up (and are now reprocessable).
 try {
-  const { count } = await api.getAwaitingCount();
-  if (count > 0) {
+  const [{ count }, keysData] = await Promise.allSettled([
+    api.getAwaitingCount(),
+    api.getApiKeys(),
+  ]).then(([c, k]) => [
+    c.status === "fulfilled" ? c.value : { count: 0 },
+    k.status === "fulfilled" ? k.value : null,
+  ]);
+  const aiConfigured = keysData?.activeProvider;
+  if (count > 0 && !aiConfigured) {
     awaitingBanner.hidden = false;
   }
 } catch {
   // Non-fatal
 }
 
+// ─── Initial load ──────────────────────────────────────────────────────────────
+// Always load from the API immediately — the Firestore listener below handles
+// real-time refreshes but must NOT gate the initial render. The collectionGroup
+// query can silently return empty if the index isn't deployed yet or Firestore
+// rules prevent the query, which would falsely show "all caught up".
+loadMeetings();
+
 // ─── Real-time meetings listener ───────────────────────────────────────────────
-// Watches the user's pending tasks in Firestore. Each snapshot fires loadMeetings()
-// so new meetings appear automatically when processing completes, and cards
-// disappear when all proposals are resolved — no manual refresh needed.
+// Re-calls loadMeetings() whenever pending tasks change so new meetings appear
+// automatically when processing completes, and cards disappear when all
+// proposals are resolved — no manual refresh needed.
 const _pendingTasksQ = query(
   collectionGroup(db, "tasks"),
   where("assigneeUid", "==", user.uid),
   where("status", "==", "pending")
 );
 
-// Fallback: if onSnapshot doesn't fire within 10 s, clear the spinner.
-let _listenerFired = false;
-const _fallbackTimer = setTimeout(() => {
-  if (!_listenerFired) {
-    console.warn("onSnapshot did not fire within 10 s — clearing spinner");
-    showEmptyState();
-  }
-}, 10_000);
+console.log("Dashboard query uid:", user.uid);
 
 const _unsubMeetings = onSnapshot(
   _pendingTasksQ,
-  (snapshot) => {
-    _listenerFired = true;
-    clearTimeout(_fallbackTimer);
-    if (snapshot.empty) { showEmptyState(); return; }
+  () => {
+    // A change fired — refresh from the API so the view stays in sync.
+    // Do NOT use snapshot.empty to set empty state: the snapshot scope is
+    // narrower than the API (e.g. no orgId filter) and can be empty while
+    // the API still has meetings to show.
     loadMeetings();
   },
   (error) => {
-    _listenerFired = true;
-    clearTimeout(_fallbackTimer);
     console.error("Listener error:", error);
-    showErrorState();
+    // The initial loadMeetings() above already ran — listener errors are
+    // non-fatal; the user can still see meetings via the initial load.
   }
 );
 

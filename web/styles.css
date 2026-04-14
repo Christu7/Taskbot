@@ -479,6 +479,21 @@ details[open] .excerpt-toggle { color: #374151; }
 .admin-table col.col-active { width: 80px; }
 .admin-table col.col-actions { width: 100px; }
 
+/* ── Meetings table — horizontal scroll + constrained title column ─────── */
+#meetings-list {
+  overflow-x: auto;
+}
+
+#tab-meetings .admin-table {
+  min-width: 900px;
+}
+
+#tab-meetings .admin-table td:first-child {
+  min-width: 160px;
+  max-width: 280px;
+  word-break: break-word;
+}
+
 .role-select {
   padding: 5px 10px;
   border: 1px solid #e5e7eb;
